@@ -12,8 +12,8 @@ import {
   User,
 } from "lucide-react";
 
-import logoImg from "figma:asset/95c148e88dae2eaa6d0d6e78178746ac36a9c4e4.png";
-import giftIconImg from "figma:asset/e10acff9e02b58a2a1dd908d0aa5fb754a514b42.png";
+import logoHorizontalImg from "../../../assets/logo horizontal.png";
+import giftIconImg from "../../../assets/gift-icon.png";
 
 // ─── CATEGORY ICON ─────────────────────────────────────
 export function CategoryIcon({ icon, className = "" }: { icon: string; className?: string }) {
@@ -396,7 +396,7 @@ export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" | "xl" }) {
   const heights = { sm: "h-8", md: "h-10", lg: "h-16", xl: "h-32" };
   return (
     <img
-      src={logoImg}
+      src={logoHorizontalImg}
       alt="MonCadeauLocal"
       className={`${heights[size]} w-auto object-contain`}
     />

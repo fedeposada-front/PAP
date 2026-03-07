@@ -1,8 +1,8 @@
 import { MapPin, Star, Clock, Truck, ShoppingBag } from "lucide-react";
 import type { Shop, Product } from "../data/mock-data";
 import { CATEGORIES } from "../data/mock-data";
-import logoImg from "figma:asset/95c148e88dae2eaa6d0d6e78178746ac36a9c4e4.png";
-import giftIcon from "figma:asset/e10acff9e02b58a2a1dd908d0aa5fb754a514b42.png";
+import logoImg from "../../assets/logo.png";
+import giftIcon from "../../assets/gift-icon.png";
 
 function getCategoryLabel(id: string): string {
   return CATEGORIES.find((c) => c.id === id)?.label ?? id;

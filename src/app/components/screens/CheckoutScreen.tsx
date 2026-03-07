@@ -12,6 +12,7 @@ import {
 import { motion } from "motion/react";
 import { Button, Badge, Header, Input } from "../ds";
 import { useCart } from "../CartContext";
+import { trackLeadEvent } from "../../services/leadEvents";
 
 export function CheckoutScreen() {
   const navigate = useNavigate();
@@ -32,6 +33,18 @@ export function CheckoutScreen() {
   const hasDeliveryItems = items.some((item) => item.mode === "delivery");
 
   const handleConfirm = () => {
+    for (const item of items) {
+      trackLeadEvent({
+        type: "reservation_request",
+        shopId: item.product.shopId,
+        productId: item.product.id,
+        metadata: {
+          mode: item.mode,
+          qty: item.qty,
+          amount: Number((item.product.price * item.qty).toFixed(2)),
+        },
+      });
+    }
     setConfirmed(true);
   };
 

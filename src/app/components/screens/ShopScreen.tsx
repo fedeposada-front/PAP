@@ -10,10 +10,11 @@ import {
   Share2,
   ChevronRight,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Badge, ProductCard, Header, BottomNav } from "../ds";
 import { SHOPS, PRODUCTS } from "../../data/mock-data";
 import { useAuth } from "../AuthContext";
+import { trackLeadEvent } from "../../services/leadEvents";
 
 export function ShopScreen() {
   const { id } = useParams();
@@ -22,6 +23,42 @@ export function ShopScreen() {
   const shopProducts = PRODUCTS.filter((p) => p.shopId === shop.id);
   const [liked, setLiked] = useState(false);
   const { user, isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    trackLeadEvent({
+      type: "view_shop",
+      shopId: shop.id,
+      metadata: { source: "shop_screen" },
+    });
+  }, [shop.id]);
+
+  const handleCallShop = () => {
+    trackLeadEvent({
+      type: "click_call",
+      shopId: shop.id,
+      metadata: { source: "shop_screen" },
+    });
+    window.location.href = `tel:${shop.phone.replace(/[^\d+]/g, "")}`;
+  };
+
+  const handleRoute = () => {
+    trackLeadEvent({
+      type: "click_route",
+      shopId: shop.id,
+      metadata: { source: "shop_screen" },
+    });
+    const query = encodeURIComponent(`${shop.address}, ${shop.city}`);
+    window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, "_blank");
+  };
+
+  const handleMessage = () => {
+    trackLeadEvent({
+      type: "click_message",
+      shopId: shop.id,
+      metadata: { source: "shop_screen" },
+    });
+    navigate(`/messages?shop=${shop.id}`);
+  };
 
   // Fill with related products if too few
   const displayProducts = shopProducts.length >= 3
@@ -110,7 +147,9 @@ export function ShopScreen() {
               </div>
               <div className="flex items-center gap-3 text-sm">
                 <Phone className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                <span>{shop.phone}</span>
+                <button onClick={handleCallShop} className="text-coral hover:underline">
+                  {shop.phone}
+                </button>
               </div>
             </div>
           </div>
@@ -120,7 +159,7 @@ export function ShopScreen() {
             <Button
               fullWidth
               icon={<MessageCircle className="w-4 h-4" />}
-              onClick={() => navigate(`/messages?shop=${shop.id}`)}
+              onClick={handleMessage}
             >
               Contacter
             </Button>
@@ -128,6 +167,7 @@ export function ShopScreen() {
               fullWidth
               variant="outline"
               icon={<Navigation className="w-4 h-4" />}
+              onClick={handleRoute}
             >
               Itinéraire
             </Button>
@@ -175,7 +215,9 @@ export function ShopScreen() {
                 <Phone className="w-4 h-4 text-coral mt-0.5" />
                 <div>
                   <p>Téléphone</p>
-                  <p className="text-muted-foreground">{shop.phone}</p>
+                  <button onClick={handleCallShop} className="text-coral hover:underline">
+                    {shop.phone}
+                  </button>
                 </div>
               </div>
             </div>
@@ -183,7 +225,7 @@ export function ShopScreen() {
               <Button
                 fullWidth
                 icon={<MessageCircle className="w-4 h-4" />}
-                onClick={() => navigate(`/messages?shop=${shop.id}`)}
+                onClick={handleMessage}
               >
                 Contacter la boutique
               </Button>
@@ -191,6 +233,7 @@ export function ShopScreen() {
                 fullWidth
                 variant="outline"
                 icon={<Navigation className="w-4 h-4" />}
+                onClick={handleRoute}
               >
                 Voir l'itinéraire
               </Button>

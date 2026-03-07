@@ -22,6 +22,7 @@ function useDebounce(value: string, delay: number) {
 }
 
 const POPULAR_CITIES = [
+  { nom: "Amiens", cp: "80000", dep: "Somme (80)", lat: 49.8941, lng: 2.2958 },
   { nom: "Paris", cp: "75001", dep: "Paris (75)", lat: 48.8566, lng: 2.3522 },
   { nom: "Lyon", cp: "69001", dep: "Rhône (69)", lat: 45.7578, lng: 4.832 },
   { nom: "Marseille", cp: "13001", dep: "Bouches-du-Rhône (13)", lat: 43.2965, lng: 5.3698 },
@@ -39,6 +40,7 @@ export function LocationScreen() {
   const [results, setResults] = useState<CityResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [geoError, setGeoError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debouncedSearch = useDebounce(search.trim(), 300);
 
@@ -98,6 +100,8 @@ export function LocationScreen() {
   };
 
   const handleUseCurrentPosition = () => {
+    setGeoError(null);
+
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -111,26 +115,12 @@ export function LocationScreen() {
           navigate("/home");
         },
         () => {
-          // Fallback to Lyon
-          setLocation({
-            cityName: "Lyon",
-            postalCode: "69001",
-            department: "Rhône (69)",
-            lat: 45.7578,
-            lng: 4.832,
-          });
-          navigate("/home");
-        }
+          setGeoError("La position actuelle n'a pas pu etre recuperee. Autorise la geolocalisation ou choisis une ville.");
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
       );
     } else {
-      setLocation({
-        cityName: "Lyon",
-        postalCode: "69001",
-        department: "Rhône (69)",
-        lat: 45.7578,
-        lng: 4.832,
-      });
-      navigate("/home");
+      setGeoError("La geolocalisation n'est pas disponible sur cet appareil.");
     }
   };
 
@@ -207,6 +197,10 @@ export function LocationScreen() {
           </p>
         )}
 
+        {geoError && (
+          <p className="text-sm text-red-500 mt-3 text-center">{geoError}</p>
+        )}
+
         {/* Results list */}
         <div className="mt-4 space-y-1">
           {/* Popular cities when no search */}
@@ -248,8 +242,8 @@ export function LocationScreen() {
                 const depLabel = city.departement
                   ? `${city.departement.nom} (${city.departement.code})`
                   : "";
-                const lat = city.centre?.coordinates[1] ?? 45.7578;
-                const lng = city.centre?.coordinates[0] ?? 4.832;
+                const lat = city.centre?.coordinates[1] ?? 49.8941;
+                const lng = city.centre?.coordinates[0] ?? 2.2958;
                 return (
                   <button
                     key={`${city.nom}-${mainCp}-${idx}`}

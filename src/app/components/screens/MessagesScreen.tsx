@@ -4,6 +4,7 @@ import { Send, Image, ChevronRight } from "lucide-react";
 import { Header, BottomNav, Badge } from "../ds";
 import { SHOPS } from "../../data/mock-data";
 import { useAuth } from "../AuthContext";
+import { trackLeadEvent } from "../../services/leadEvents";
 
 interface Message {
   id: string;
@@ -137,6 +138,12 @@ function ChatView({ shopId, onBack }: { shopId: string; onBack: () => void }) {
   const handleSend = () => {
     const text = input.trim();
     if (!text) return;
+
+    trackLeadEvent({
+      type: "click_message",
+      shopId,
+      metadata: { source: "messages_screen" },
+    });
 
     const userMsg: Message = {
       id: `u-${Date.now()}`,

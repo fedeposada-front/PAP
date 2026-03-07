@@ -60,7 +60,7 @@ interface ShopMapProps {
   cityLabel?: string;
 }
 
-const CENTER: L.LatLngTuple = [45.7578, 4.832];
+const CENTER: L.LatLngTuple = [49.8941, 2.2958];
 
 export function ShopMap({ shops, onShopClick, className = "", center, cityLabel }: ShopMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -99,7 +99,7 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
       .bindPopup(
         `<div style="text-align:center;padding:2px 4px;">
           <strong>Vous êtes ici</strong><br/>
-          <span style="font-size:12px;color:#6b7280;">${cityLabel ?? "Lyon 2e"}</span>
+          <span style="font-size:12px;color:#6b7280;">${cityLabel ?? "Amiens"}</span>
         </div>`
       );
     userMarkerRef.current = userMarker;
@@ -145,7 +145,7 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
     userMarker.setPopupContent(
       `<div style="text-align:center;padding:2px 4px;">
         <strong>Vous êtes ici</strong><br/>
-        <span style="font-size:12px;color:#6b7280;">${cityLabel ?? "Lyon 2e"}</span>
+        <span style="font-size:12px;color:#6b7280;">${cityLabel ?? "Amiens"}</span>
       </div>`
     );
   }, [centerLat, centerLng, cityLabel]);

@@ -1,9 +1,10 @@
 import { CATEGORIES, SHOPS, PRODUCTS } from "../../data/mock-data";
 import { ShopMap } from "../ShopMap";
+import { SponsoredCard } from "../SponsoredCard";
 import { useLocation } from "../LocationContext";
 import { useCart } from "../CartContext";
 import { useAuth } from "../AuthContext";
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Search,
@@ -30,6 +31,12 @@ import {
   Logo,
   CategoryIcon,
 } from "../ds";
+import {
+  fetchSponsoredAd,
+  trackAdClick,
+  trackAdImpression,
+  type SponsoredAd,
+} from "../../services/ads";
 
 export function HomeScreen() {
   const navigate = useNavigate();
@@ -40,6 +47,7 @@ export function HomeScreen() {
   const [activeCategory, setActiveCategory] = useState("all");
   const [showFilters, setShowFilters] = useState(false);
   const [showCategories, setShowCategories] = useState(false);
+  const [sponsoredAd, setSponsoredAd] = useState<SponsoredAd | null>(null);
   const [filters, setFilters] = useState({
     openNow: false,
     pickupToday: false,
@@ -74,12 +82,35 @@ export function HomeScreen() {
 
   const activeCat =
     CATEGORIES.find((c) => c.id === activeCategory) ?? CATEGORIES[0];
+  const featuredCategories = CATEGORIES.filter((cat) =>
+    ["all", "gourmand", "fleurs", "bijoux", "deco", "livres"].includes(cat.id)
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const ad = await fetchSponsoredAd(location.cityName, "home_sidebar");
+      if (!cancelled) {
+        setSponsoredAd(ad);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [location.cityName]);
+
+  useEffect(() => {
+    if (!sponsoredAd) return;
+    void trackAdImpression({ ...sponsoredAd, city: location.cityName });
+  }, [sponsoredAd, location.cityName]);
 
   return (
     <div className="min-h-screen flex flex-col bg-background pb-16 lg:pb-0">
       {/* Desktop nav */}
       <header className="hidden lg:flex items-center justify-between px-8 py-3 bg-white border-b border-border">
-        <Logo size="sm" />
+        <Logo size="xl" />
         <div className="flex-1 max-w-xl mx-8">
           <Input
             placeholder="Rechercher un cadeau, une boutique..."
@@ -128,7 +159,7 @@ export function HomeScreen() {
       <div className="lg:hidden bg-white pb-2 shadow-sm">
         {/* Row 1: Logo + action icons */}
         <div className="flex items-center justify-between px-4 pt-3 pb-2">
-          <Logo size="sm" />
+          <Logo size="xl" />
           <div className="flex items-center gap-1">
             <button
               onClick={() => navigate("/cart")}
@@ -196,19 +227,34 @@ export function HomeScreen() {
         </button>
       </div>
 
-      {/* Desktop categories (horizontal chips) */}
-      <div className="hidden lg:block px-4 py-2.5 overflow-x-auto bg-white lg:px-8 border-b border-border">
-        <div className="flex gap-2 min-w-max">
-          {CATEGORIES.map((cat) => (
-            <Chip
+      {/* Desktop categories */}
+      <div className="hidden lg:block px-8 py-3 bg-white border-b border-border">
+        <div className="flex items-center gap-2 flex-wrap">
+          {featuredCategories.map((cat) => (
+            <button
               key={cat.id}
-              active={activeCategory === cat.id}
               onClick={() => setActiveCategory(cat.id)}
-              icon={<CategoryIcon icon={cat.icon} className="text-sm w-4 h-4" />}
+              className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm transition-all ${
+                activeCategory === cat.id
+                  ? "border-coral bg-coral text-white shadow-sm"
+                  : "border-border bg-white text-foreground hover:border-coral/30"
+              }`}
             >
-              {cat.label}
-            </Chip>
+              <CategoryIcon
+                icon={cat.icon}
+                className={`w-4 h-4 ${activeCategory === cat.id ? "" : "text-base"}`}
+              />
+              <span>
+                {cat.id === "all" ? "Toutes les idées cadeaux" : cat.label}
+              </span>
+            </button>
           ))}
+          <button
+            onClick={() => setShowCategories(true)}
+            className="rounded-xl border border-border bg-input-background px-4 py-2.5 text-sm text-foreground transition-colors hover:bg-muted"
+          >
+            + Categories
+          </button>
         </div>
       </div>
 
@@ -278,36 +324,24 @@ export function HomeScreen() {
       <div className="flex-1 overflow-y-auto">
         {/* Desktop: side-by-side layout */}
         <div className="hidden lg:flex px-8 py-4 gap-6">
-          {/* Map (left) */}
-          <div className="flex-1 rounded-2xl overflow-hidden border border-border relative">
-            <div className="h-[calc(100vh-260px)] min-h-[400px]">
-              <ShopMap
-                shops={filteredShops}
-                onShopClick={(id) => navigate(`/shop/${id}`)}
-                center={mapCenter}
-                cityLabel={location.cityName}
-              />
+          <div className="flex-1 min-w-0">
+            <div className="rounded-2xl overflow-hidden border border-border relative">
+              <div className="h-[calc(100vh-340px)] min-h-[420px]">
+                <ShopMap
+                  shops={filteredShops}
+                  onShopClick={(id) => navigate(`/shop/${id}`)}
+                  center={mapCenter}
+                  cityLabel={location.cityName}
+                />
+              </div>
             </div>
-          </div>
 
-          {/* Right sidebar: shops + recent products */}
-          <div className="w-[420px] flex-shrink-0 space-y-3 overflow-y-auto max-h-[calc(100vh-260px)]">
-            <h3 className="mb-1">Boutiques à proximité</h3>
-            {filteredShops.map((shop) => (
-              <ShopCard
-                key={shop.id}
-                {...shop}
-                onClick={() => navigate(`/shop/${shop.id}`)}
-              />
-            ))}
-
-            {/* Recently added products */}
-            <div className="pt-4">
+            <div className="mt-6">
               <div className="flex items-center gap-2 mb-3">
                 <Sparkles className="w-4 h-4 text-coral" />
-                <h3>Récemment ajoutés</h3>
+                <h3>Derniers produits ajoutes pres de {location.cityName}</h3>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 {recentProducts.slice(0, 6).map((product) => (
                   <ProductCard
                     key={product.id}
@@ -317,6 +351,40 @@ export function HomeScreen() {
                 ))}
               </div>
             </div>
+          </div>
+
+          {/* Right sidebar: shops */}
+          <div className="w-[420px] flex-shrink-0 space-y-3 overflow-y-auto max-h-[calc(100vh-340px)]">
+            <h3 className="mb-1">Boutiques à proximité</h3>
+            {filteredShops.map((shop) => (
+              <ShopCard
+                key={shop.id}
+                {...shop}
+                onClick={() => navigate(`/shop/${shop.id}`)}
+              />
+            ))}
+            {sponsoredAd && (
+              <SponsoredCard
+                ad={{ ...sponsoredAd, city: location.cityName }}
+                onClick={() => {
+                  void trackAdClick({ ...sponsoredAd, city: location.cityName });
+
+                  if (sponsoredAd.targetUrl?.startsWith("/")) {
+                    navigate(sponsoredAd.targetUrl);
+                    return;
+                  }
+
+                  if (sponsoredAd.targetUrl) {
+                    window.open(sponsoredAd.targetUrl, "_blank", "noopener,noreferrer");
+                    return;
+                  }
+
+                  if (sponsoredAd.shopId) {
+                    navigate(`/shop/${sponsoredAd.shopId}`);
+                  }
+                }}
+              />
+            )}
           </div>
         </div>
 

@@ -1,7 +1,8 @@
 import { Button, Badge, StatCard, Logo } from "../ds";
-import { PRODUCTS } from "../../data/mock-data";
+import { PRODUCTS, SHOPS } from "../../data/mock-data";
 import { useAuth } from "../AuthContext";
 import { useNavigate } from "react-router";
+import { useMemo } from "react";
 import {
   Plus,
   Eye,
@@ -13,12 +14,18 @@ import {
   TrendingUp,
   Bell,
 } from "lucide-react";
+import { getLeadStats } from "../../services/leadEvents";
 
 export function DashboardScreen() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const displayName = user?.shopName || user?.lastName || "Maison Dupont";
   const sellerProducts = PRODUCTS.slice(0, 4);
+  const sellerShop = SHOPS.find((s) => s.name === displayName) || SHOPS[0];
+  const leadStats = useMemo(
+    () => getLeadStats({ shopId: sellerShop.id, sinceDays: 30 }),
+    [sellerShop.id]
+  );
 
   // Mock seller stats
   const totalSales = 1247.5;
@@ -69,22 +76,42 @@ export function DashboardScreen() {
             trend="+12%"
           />
           <StatCard
-            icon="📦"
-            label="Commandes"
-            value="34"
-            trend="+8%"
+            icon="📩"
+            label="Demandes (30j)"
+            value={String(leadStats.reservationRequest)}
           />
           <StatCard
             icon="👁️"
             label="Vues boutique"
-            value="892"
-            trend="+23%"
+            value={String(leadStats.viewShop)}
           />
           <StatCard
             icon="💬"
             label="Messages"
-            value="12"
+            value={String(leadStats.clickMessage)}
           />
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-6">
+          <h4 className="mb-3">Leads locaux (30 jours)</h4>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            <div className="bg-muted rounded-xl p-3">
+              <p className="text-muted-foreground">Appels</p>
+              <p className="text-lg">{leadStats.clickCall}</p>
+            </div>
+            <div className="bg-muted rounded-xl p-3">
+              <p className="text-muted-foreground">Itinéraires</p>
+              <p className="text-lg">{leadStats.clickRoute}</p>
+            </div>
+            <div className="bg-muted rounded-xl p-3">
+              <p className="text-muted-foreground">Messages</p>
+              <p className="text-lg">{leadStats.clickMessage}</p>
+            </div>
+            <div className="bg-coral-light rounded-xl p-3">
+              <p className="text-muted-foreground">Leads totaux</p>
+              <p className="text-lg text-coral">{leadStats.totalLeads}</p>
+            </div>
+          </div>
         </div>
 
         {/* Seller fee info */}

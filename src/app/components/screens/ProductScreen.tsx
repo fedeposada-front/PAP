@@ -16,6 +16,7 @@ import { Button, Badge, Header, BottomNav } from "../ds";
 import { PRODUCTS, SHOPS } from "../../data/mock-data";
 import { useCart } from "../CartContext";
 import { useAuth } from "../AuthContext";
+import { trackLeadEvent } from "../../services/leadEvents";
 
 export function ProductScreen() {
   const { id } = useParams();
@@ -221,7 +222,15 @@ export function ProductScreen() {
               size="lg"
               icon={<MessageCircle className="w-5 h-5" />}
               className="mt-3"
-              onClick={() => navigate(`/messages?shop=${product.shopId}`)}
+              onClick={() => {
+                trackLeadEvent({
+                  type: "click_message",
+                  shopId: product.shopId,
+                  productId: product.id,
+                  metadata: { source: "product_screen" },
+                });
+                navigate(`/messages?shop=${product.shopId}`);
+              }}
             >
               Envoyer un message
             </Button>

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import { Button, Logo } from "../ds";
 import { ONBOARDING_SLIDES } from "../../data/mock-data";
-import giftIcon from "figma:asset/e10acff9e02b58a2a1dd908d0aa5fb754a514b42.png";
+import giftIcon from "../../../assets/gift-icon.png";
 
 export function OnboardingScreen() {
   const navigate = useNavigate();
