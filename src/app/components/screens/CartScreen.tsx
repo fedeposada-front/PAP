@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Trash2,
@@ -6,59 +5,31 @@ import {
   Truck,
   Minus,
   Plus,
+  ShoppingBag,
 } from "lucide-react";
 import { Button, Badge, Header, BottomNav } from "../ds";
-import { PRODUCTS } from "../../data/mock-data";
+import { useCart } from "../CartContext";
+import { useAuth } from "../AuthContext";
 
 export function CartScreen() {
   const navigate = useNavigate();
-  const [items, setItems] = useState([
-    { product: PRODUCTS[0], qty: 1, mode: "pickup" as "pickup" | "delivery" },
-    { product: PRODUCTS[2], qty: 1, mode: "delivery" as "pickup" | "delivery" },
-  ]);
-
-  const subtotal = items.reduce(
-    (sum, item) => sum + item.product.price * item.qty,
-    0
-  );
-  const buyerFee = subtotal * 0.02;
-  const total = subtotal + buyerFee;
-
-  const updateQty = (index: number, delta: number) => {
-    setItems((prev) =>
-      prev
-        .map((item, i) =>
-          i === index ? { ...item, qty: Math.max(0, item.qty + delta) } : item
-        )
-        .filter((item) => item.qty > 0)
-    );
-  };
-
-  const toggleMode = (index: number) => {
-    setItems((prev) =>
-      prev.map((item, i) =>
-        i === index
-          ? {
-              ...item,
-              mode: item.mode === "pickup" ? "delivery" : "pickup",
-            }
-          : item
-      )
-    );
-  };
+  const { items, updateQty, removeItem, toggleMode, subtotal, buyerFee, total, totalItems } = useCart();
+  const { user, isAuthenticated } = useAuth();
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
-      <Header title="Panier" onBack={() => navigate(-1)} />
+    <div className="min-h-screen flex flex-col bg-background pb-16">
+      <Header title={`Panier${totalItems > 0 ? ` (${totalItems})` : ""}`} onBack={() => navigate(-1)} />
 
       <div className="flex-1 lg:max-w-4xl lg:mx-auto lg:w-full lg:flex lg:gap-8 lg:py-6 lg:px-8">
         {/* Items */}
         <div className="flex-1 px-4 lg:px-0 py-4 space-y-3">
           {items.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20">
-              <span className="text-5xl mb-4">🛒</span>
+              <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mb-4">
+                <ShoppingBag className="w-8 h-8 text-muted-foreground" />
+              </div>
               <h3 className="mb-2">Votre panier est vide</h3>
-              <p className="text-sm text-muted-foreground mb-6">
+              <p className="text-sm text-muted-foreground mb-6 text-center max-w-xs">
                 Explorez les boutiques locales pour trouver le cadeau parfait
               </p>
               <Button onClick={() => navigate("/home")}>
@@ -66,7 +37,7 @@ export function CartScreen() {
               </Button>
             </div>
           ) : (
-            items.map((item, index) => (
+            items.map((item) => (
               <div
                 key={item.product.id}
                 className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm"
@@ -75,20 +46,26 @@ export function CartScreen() {
                   <img
                     src={item.product.image}
                     alt={item.product.title}
-                    className="w-20 h-20 rounded-xl object-cover flex-shrink-0"
+                    className="w-20 h-20 rounded-xl object-cover flex-shrink-0 cursor-pointer"
+                    onClick={() => navigate(`/product/${item.product.id}`)}
                   />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-muted-foreground">
                       {item.product.shopName}
                     </p>
-                    <p className="text-sm truncate">{item.product.title}</p>
+                    <p
+                      className="text-sm truncate cursor-pointer hover:text-coral transition-colors"
+                      onClick={() => navigate(`/product/${item.product.id}`)}
+                    >
+                      {item.product.title}
+                    </p>
                     <p className="text-coral mt-0.5">
-                      {item.product.price.toFixed(2)} €
+                      {(item.product.price * item.qty).toFixed(2)} €
                     </p>
                   </div>
                   <button
-                    onClick={() => updateQty(index, -item.qty)}
-                    className="text-muted-foreground hover:text-destructive self-start"
+                    onClick={() => removeItem(item.product.id)}
+                    className="text-muted-foreground hover:text-destructive self-start transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -98,15 +75,15 @@ export function CartScreen() {
                 <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
                   <div className="flex items-center gap-3">
                     <button
-                      onClick={() => updateQty(index, -1)}
-                      className="w-8 h-8 flex items-center justify-center rounded-full border border-border"
+                      onClick={() => updateQty(item.product.id, -1)}
+                      className="w-8 h-8 flex items-center justify-center rounded-full border border-border hover:bg-muted transition-colors"
                     >
                       <Minus className="w-3.5 h-3.5" />
                     </button>
                     <span className="w-6 text-center">{item.qty}</span>
                     <button
-                      onClick={() => updateQty(index, 1)}
-                      className="w-8 h-8 flex items-center justify-center rounded-full border border-border"
+                      onClick={() => updateQty(item.product.id, 1)}
+                      className="w-8 h-8 flex items-center justify-center rounded-full border border-border hover:bg-muted transition-colors"
                     >
                       <Plus className="w-3.5 h-3.5" />
                     </button>
@@ -114,7 +91,7 @@ export function CartScreen() {
 
                   <div className="flex gap-2">
                     <button
-                      onClick={() => toggleMode(index)}
+                      onClick={() => { if (item.mode !== "pickup") toggleMode(item.product.id); }}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
                         item.mode === "pickup"
                           ? "bg-coral-light text-coral"
@@ -124,17 +101,19 @@ export function CartScreen() {
                       <MapPin className="w-3 h-3" />
                       Retrait
                     </button>
-                    <button
-                      onClick={() => toggleMode(index)}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
-                        item.mode === "delivery"
-                          ? "bg-coral-light text-coral"
-                          : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      <Truck className="w-3 h-3" />
-                      Livraison
-                    </button>
+                    {item.product.delivery && (
+                      <button
+                        onClick={() => { if (item.mode !== "delivery") toggleMode(item.product.id); }}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
+                          item.mode === "delivery"
+                            ? "bg-coral-light text-coral"
+                            : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        <Truck className="w-3 h-3" />
+                        Livraison
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -150,7 +129,7 @@ export function CartScreen() {
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">
-                    Sous-total ({items.reduce((s, i) => s + i.qty, 0)} articles)
+                    Sous-total ({totalItems} article{totalItems > 1 ? "s" : ""})
                   </span>
                   <span>{subtotal.toFixed(2)} €</span>
                 </div>
@@ -211,6 +190,8 @@ export function CartScreen() {
       <BottomNav active="cart" onNavigate={(tab) => {
         if (tab === "home") navigate("/home");
         if (tab === "cart") navigate("/cart");
+        if (tab === "messages") navigate("/messages");
+        if (tab === "profile") navigate(isAuthenticated && user?.role === "seller" ? "/dashboard" : "/auth");
       }} />
     </div>
   );

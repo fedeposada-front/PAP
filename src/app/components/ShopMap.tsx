@@ -107,6 +107,17 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
     markersRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
+    // Event delegation: handle clicks on shop popups via the map container
+    containerRef.current.addEventListener("click", (e) => {
+      const target = (e.target as HTMLElement).closest("[data-shop-id]") as HTMLElement | null;
+      if (target) {
+        const shopId = target.getAttribute("data-shop-id");
+        if (shopId) {
+          onShopClickRef.current(shopId);
+        }
+      }
+    });
+
     // Invalidate size after render + on resize so tiles load correctly
     setTimeout(() => map.invalidateSize(), 200);
 

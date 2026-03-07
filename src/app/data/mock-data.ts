@@ -51,7 +51,7 @@ export interface Product {
 }
 
 export const CATEGORIES = [
-  { id: "all", label: "Cadeaux & Idées cadeaux", icon: "🎁" },
+  { id: "all", label: "Cadeaux & Idées cadeaux", icon: "gift-custom" },
   { id: "gourmand", label: "Gourmand / Épicerie fine", icon: "🍫" },
   { id: "boulangerie", label: "Boulangerie / Pâtisserie", icon: "🥖" },
   { id: "frais", label: "Produits frais", icon: "🧀" },
@@ -367,7 +367,7 @@ export const PRODUCTS: Product[] = [
 
 export const ONBOARDING_SLIDES = [
   {
-    emoji: "🎁",
+    emoji: "gift-custom",
     title: "Trouvez le cadeau parfait, près de chez vous",
     description: "Parcourez les boutiques locales de votre quartier et découvrez des cadeaux uniques et artisanaux.",
   },

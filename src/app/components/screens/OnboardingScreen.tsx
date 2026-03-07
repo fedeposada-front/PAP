@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import { Button, Logo } from "../ds";
 import { ONBOARDING_SLIDES } from "../../data/mock-data";
+import giftIcon from "figma:asset/e10acff9e02b58a2a1dd908d0aa5fb754a514b42.png";
 
 export function OnboardingScreen() {
   const navigate = useNavigate();
@@ -34,7 +35,11 @@ export function OnboardingScreen() {
             transition={{ duration: 0.3 }}
             className="text-center max-w-md"
           >
-            <span className="text-7xl mb-8 block">{slide.emoji}</span>
+            {slide.emoji === "gift-custom" ? (
+              <img src={giftIcon} alt="Cadeau" className="w-20 h-20 mx-auto mb-8 object-contain" />
+            ) : (
+              <span className="text-7xl mb-8 block">{slide.emoji}</span>
+            )}
             <h1 className="mb-4">{slide.title}</h1>
             <p className="text-muted-foreground">{slide.description}</p>
           </motion.div>
@@ -59,7 +64,7 @@ export function OnboardingScreen() {
           </Button>
         ) : (
           <Button fullWidth size="lg" onClick={() => navigate("/location")}>
-            Commencer 🎉
+            Commencer
           </Button>
         )}
       </div>

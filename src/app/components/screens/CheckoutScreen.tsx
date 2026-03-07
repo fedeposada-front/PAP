@@ -11,12 +11,16 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { Button, Badge, Header, Input } from "../ds";
-import { PRODUCTS } from "../../data/mock-data";
+import { useCart } from "../CartContext";
 
 export function CheckoutScreen() {
   const navigate = useNavigate();
+  const { items, toggleMode, subtotal, buyerFee, total, clearCart } = useCart();
   const [confirmed, setConfirmed] = useState(false);
   const [editingAddress, setEditingAddress] = useState(false);
+  const [orderNumber] = useState(
+    `MCL-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`
+  );
   const [address, setAddress] = useState({
     name: "Marie Durand",
     street: "24 Rue Victor Hugo",
@@ -25,29 +29,16 @@ export function CheckoutScreen() {
   });
   const [tempAddress, setTempAddress] = useState(address);
 
-  const [items, setItems] = useState([
-    { product: PRODUCTS[0], qty: 1, mode: "pickup" as "pickup" | "delivery" },
-    { product: PRODUCTS[2], qty: 1, mode: "delivery" as "pickup" | "delivery" },
-  ]);
-
-  const toggleMode = (index: number) => {
-    setItems((prev) =>
-      prev.map((item, i) =>
-        i === index
-          ? { ...item, mode: item.mode === "pickup" ? "delivery" : "pickup" }
-          : item
-      )
-    );
-  };
-
   const hasDeliveryItems = items.some((item) => item.mode === "delivery");
 
-  const subtotal = items.reduce(
-    (sum, item) => sum + item.product.price * item.qty,
-    0
-  );
-  const buyerFee = subtotal * 0.02;
-  const total = subtotal + buyerFee;
+  const handleConfirm = () => {
+    setConfirmed(true);
+  };
+
+  if (items.length === 0 && !confirmed) {
+    navigate("/cart");
+    return null;
+  }
 
   if (confirmed) {
     return (
@@ -68,7 +59,7 @@ export function CheckoutScreen() {
         >
           <h1 className="mb-2">Commande confirmée !</h1>
           <p className="text-muted-foreground mb-2">
-            Merci pour votre achat. Votre commande n°MCL-2026-0847 a bien été
+            Merci pour votre achat. Votre commande n°{orderNumber} a bien été
             enregistrée.
           </p>
           <div className="flex items-center justify-center gap-2 mb-8">
@@ -93,11 +84,11 @@ export function CheckoutScreen() {
                 <div className="flex-1 text-sm">
                   <p className="truncate">{item.product.title}</p>
                   <p className="text-xs text-muted-foreground">
-                    {item.mode === "pickup" ? "📍 Retrait" : "🚚 Livraison"} ·{" "}
+                    {item.mode === "pickup" ? "Retrait" : "Livraison"} ·{" "}
                     {item.product.shopName}
                   </p>
                 </div>
-                <p className="text-sm">{item.product.price.toFixed(2)} €</p>
+                <p className="text-sm">{(item.product.price * item.qty).toFixed(2)} €</p>
               </div>
             ))}
             <div className="flex justify-between text-sm mt-3 pt-2 border-t border-border">
@@ -107,10 +98,10 @@ export function CheckoutScreen() {
           </div>
 
           <div className="flex flex-col gap-3">
-            <Button fullWidth onClick={() => navigate("/home")}>
+            <Button fullWidth onClick={() => { clearCart(); navigate("/home"); }}>
               Continuer mes achats
             </Button>
-            <Button fullWidth variant="outline" onClick={() => navigate("/home")}>
+            <Button fullWidth variant="outline" onClick={() => { clearCart(); navigate("/home"); }}>
               Suivre ma commande
             </Button>
           </div>
@@ -128,7 +119,7 @@ export function CheckoutScreen() {
           {/* Order summary */}
           <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm">
             <h4 className="mb-3">Votre commande</h4>
-            {items.map((item, index) => (
+            {items.map((item) => (
               <div
                 key={item.product.id}
                 className="py-2.5 border-b border-border last:border-0"
@@ -142,7 +133,7 @@ export function CheckoutScreen() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm truncate">{item.product.title}</p>
                     <p className="text-xs text-muted-foreground">
-                      {item.product.shopName} · × {item.qty}
+                      {item.product.shopName} · x{item.qty}
                     </p>
                   </div>
                   <p className="text-sm">
@@ -152,7 +143,7 @@ export function CheckoutScreen() {
                 {/* Delivery mode toggle */}
                 <div className="flex gap-2 mt-2.5 ml-[calc(3.5rem+0.75rem)]">
                   <button
-                    onClick={() => { if (item.mode !== "pickup") toggleMode(index); }}
+                    onClick={() => { if (item.mode !== "pickup") toggleMode(item.product.id); }}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
                       item.mode === "pickup"
                         ? "bg-coral-light text-coral"
@@ -162,17 +153,19 @@ export function CheckoutScreen() {
                     <MapPin className="w-3 h-3" />
                     Retrait en boutique
                   </button>
-                  <button
-                    onClick={() => { if (item.mode !== "delivery") toggleMode(index); }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
-                      item.mode === "delivery"
-                        ? "bg-green-light text-green"
-                        : "bg-muted text-muted-foreground hover:bg-muted/80"
-                    }`}
-                  >
-                    <Truck className="w-3 h-3" />
-                    Livraison
-                  </button>
+                  {item.product.delivery && (
+                    <button
+                      onClick={() => { if (item.mode !== "delivery") toggleMode(item.product.id); }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
+                        item.mode === "delivery"
+                          ? "bg-green-light text-green"
+                          : "bg-muted text-muted-foreground hover:bg-muted/80"
+                      }`}
+                    >
+                      <Truck className="w-3 h-3" />
+                      Livraison
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -185,7 +178,10 @@ export function CheckoutScreen() {
                 <h4>Adresse de livraison</h4>
                 <button
                   className="text-sm text-coral flex items-center gap-1"
-                  onClick={() => setEditingAddress(true)}
+                  onClick={() => {
+                    setTempAddress(address);
+                    setEditingAddress(true);
+                  }}
                 >
                   Modifier <ChevronRight className="w-3.5 h-3.5" />
                 </button>
@@ -218,7 +214,7 @@ export function CheckoutScreen() {
                   <div className="w-2.5 h-2.5 bg-coral rounded-full" />
                 </div>
               </div>
-              <div className="flex items-center gap-3 p-3 bg-muted rounded-xl">
+              <div className="flex items-center gap-3 p-3 bg-muted rounded-xl cursor-pointer hover:bg-muted/80 transition-colors">
                 <span className="text-lg">📱</span>
                 <div className="flex-1">
                   <p className="text-sm">Apple Pay / Google Pay</p>
@@ -265,7 +261,7 @@ export function CheckoutScreen() {
               fullWidth
               size="lg"
               className="mt-5"
-              onClick={() => setConfirmed(true)}
+              onClick={handleConfirm}
             >
               Payer {total.toFixed(2)} €
             </Button>
@@ -294,7 +290,7 @@ export function CheckoutScreen() {
           <span>Total</span>
           <span className="text-xl text-coral">{total.toFixed(2)} €</span>
         </div>
-        <Button fullWidth size="lg" onClick={() => setConfirmed(true)}>
+        <Button fullWidth size="lg" onClick={handleConfirm}>
           <Shield className="w-4 h-4" />
           Payer {total.toFixed(2)} €
         </Button>
@@ -302,8 +298,8 @@ export function CheckoutScreen() {
 
       {/* Address editing modal */}
       {editingAddress && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center">
-          <div className="bg-white rounded-2xl p-6 w-96">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md">
             <h3 className="mb-4">Modifier l'adresse de livraison</h3>
             <div className="space-y-3">
               <Input
@@ -329,7 +325,7 @@ export function CheckoutScreen() {
                 />
               </div>
             </div>
-            <div className="flex justify-end mt-4">
+            <div className="flex justify-end gap-3 mt-4">
               <Button
                 variant="outline"
                 onClick={() => setEditingAddress(false)}
@@ -337,7 +333,6 @@ export function CheckoutScreen() {
                 Annuler
               </Button>
               <Button
-                className="ml-3"
                 onClick={() => {
                   setAddress(tempAddress);
                   setEditingAddress(false);

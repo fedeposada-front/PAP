@@ -1,3 +1,6 @@
+import { Button, Badge, StatCard, Logo } from "../ds";
+import { PRODUCTS } from "../../data/mock-data";
+import { useAuth } from "../AuthContext";
 import { useNavigate } from "react-router";
 import {
   Plus,
@@ -10,11 +13,11 @@ import {
   TrendingUp,
   Bell,
 } from "lucide-react";
-import { Button, Badge, StatCard, Logo } from "../ds";
-import { PRODUCTS } from "../../data/mock-data";
 
 export function DashboardScreen() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const displayName = user?.shopName || user?.lastName || "Maison Dupont";
   const sellerProducts = PRODUCTS.slice(0, 4);
 
   // Mock seller stats
@@ -43,7 +46,7 @@ export function DashboardScreen() {
         {/* Welcome */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1>Bonjour, Maison Dupont 👋</h1>
+            <h1>Bonjour, {displayName} 👋</h1>
             <p className="text-muted-foreground text-sm">
               Voici un aperçu de votre activité
             </p>

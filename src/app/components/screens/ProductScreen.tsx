@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import {
   Heart,
@@ -13,15 +14,35 @@ import {
 } from "lucide-react";
 import { Button, Badge, Header, BottomNav } from "../ds";
 import { PRODUCTS, SHOPS } from "../../data/mock-data";
+import { useCart } from "../CartContext";
+import { useAuth } from "../AuthContext";
 
 export function ProductScreen() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { addItem, items } = useCart();
+  const { user, isAuthenticated } = useAuth();
   const product = PRODUCTS.find((p) => p.id === id) || PRODUCTS[0];
   const shop = SHOPS.find((s) => s.id === product.shopId);
+  const [added, setAdded] = useState(false);
+  const [liked, setLiked] = useState(false);
+
+  const isInCart = items.some((i) => i.product.id === product.id);
+
+  const handleAddToCart = (goToCart = false) => {
+    if (!isInCart) {
+      addItem(product, product.pickup ? "pickup" : "delivery");
+    }
+    if (goToCart) {
+      navigate("/cart");
+    } else {
+      setAdded(true);
+      setTimeout(() => setAdded(false), 2000);
+    }
+  };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-background pb-16">
       {/* Desktop layout */}
       <div className="hidden lg:block">
         <Header
@@ -29,8 +50,11 @@ export function ProductScreen() {
           onBack={() => navigate(-1)}
           right={
             <div className="flex gap-2">
-              <button className="w-9 h-9 flex items-center justify-center rounded-full bg-muted">
-                <Heart className="w-4 h-4" />
+              <button
+                onClick={() => setLiked(!liked)}
+                className={`w-9 h-9 flex items-center justify-center rounded-full ${liked ? "bg-coral-light" : "bg-muted"}`}
+              >
+                <Heart className={`w-4 h-4 ${liked ? "text-coral fill-coral" : ""}`} />
               </button>
               <button className="w-9 h-9 flex items-center justify-center rounded-full bg-muted">
                 <Share2 className="w-4 h-4" />
@@ -53,8 +77,11 @@ export function ProductScreen() {
             onBack={() => navigate(-1)}
             right={
               <div className="flex gap-2">
-                <button className="w-9 h-9 flex items-center justify-center rounded-full bg-white/80 backdrop-blur">
-                  <Heart className="w-4 h-4" />
+                <button
+                  onClick={() => setLiked(!liked)}
+                  className={`w-9 h-9 flex items-center justify-center rounded-full backdrop-blur ${liked ? "bg-coral-light" : "bg-white/80"}`}
+                >
+                  <Heart className={`w-4 h-4 ${liked ? "text-coral fill-coral" : ""}`} />
                 </button>
                 <button className="w-9 h-9 flex items-center justify-center rounded-full bg-white/80 backdrop-blur">
                   <Share2 className="w-4 h-4" />
@@ -171,11 +198,23 @@ export function ProductScreen() {
                 fullWidth
                 size="lg"
                 icon={<ShoppingBag className="w-5 h-5" />}
-                onClick={() => navigate("/cart")}
+                onClick={() => handleAddToCart(true)}
               >
-                Acheter · {product.price.toFixed(2)} €
+                {isInCart ? "Voir le panier" : `Acheter · ${product.price.toFixed(2)} €`}
               </Button>
             </div>
+            {!isInCart && (
+              <Button
+                fullWidth
+                variant="outline"
+                size="lg"
+                icon={added ? <Check className="w-5 h-5 text-green" /> : <ShoppingBag className="w-5 h-5" />}
+                className="mt-3"
+                onClick={() => handleAddToCart(false)}
+              >
+                {added ? "Ajouté au panier !" : "Ajouter au panier"}
+              </Button>
+            )}
             <Button
               fullWidth
               variant="outline"
@@ -198,16 +237,18 @@ export function ProductScreen() {
         </div>
         <Button
           size="lg"
-          icon={<ShoppingBag className="w-5 h-5" />}
-          onClick={() => navigate("/cart")}
+          icon={added ? <Check className="w-5 h-5" /> : <ShoppingBag className="w-5 h-5" />}
+          onClick={() => handleAddToCart(false)}
         >
-          Acheter
+          {added ? "Ajouté !" : isInCart ? "Dans le panier" : "Ajouter"}
         </Button>
       </div>
 
       <BottomNav active="home" onNavigate={(tab) => {
         if (tab === "home") navigate("/home");
         if (tab === "cart") navigate("/cart");
+        if (tab === "messages") navigate("/messages");
+        if (tab === "profile") navigate(isAuthenticated && user?.role === "seller" ? "/dashboard" : "/auth");
       }} />
     </div>
   );

@@ -10,17 +10,29 @@ import {
   Share2,
   ChevronRight,
 } from "lucide-react";
+import { useState } from "react";
 import { Button, Badge, ProductCard, Header, BottomNav } from "../ds";
 import { SHOPS, PRODUCTS } from "../../data/mock-data";
+import { useAuth } from "../AuthContext";
 
 export function ShopScreen() {
   const { id } = useParams();
   const navigate = useNavigate();
   const shop = SHOPS.find((s) => s.id === id) || SHOPS[0];
   const shopProducts = PRODUCTS.filter((p) => p.shopId === shop.id);
+  const [liked, setLiked] = useState(false);
+  const { user, isAuthenticated } = useAuth();
+
+  // Fill with related products if too few
+  const displayProducts = shopProducts.length >= 3
+    ? shopProducts
+    : [
+        ...shopProducts,
+        ...PRODUCTS.filter((p) => p.shopId !== shop.id).slice(0, 3 - shopProducts.length),
+      ];
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-background pb-16">
       {/* Hero */}
       <div className="relative">
         <img
@@ -35,8 +47,11 @@ export function ShopScreen() {
             onBack={() => navigate(-1)}
             right={
               <div className="flex gap-2">
-                <button className="w-9 h-9 flex items-center justify-center rounded-full bg-white/80 backdrop-blur">
-                  <Heart className="w-4 h-4" />
+                <button
+                  onClick={() => setLiked(!liked)}
+                  className={`w-9 h-9 flex items-center justify-center rounded-full backdrop-blur ${liked ? "bg-coral-light" : "bg-white/80"}`}
+                >
+                  <Heart className={`w-4 h-4 ${liked ? "text-coral fill-coral" : ""}`} />
                 </button>
                 <button className="w-9 h-9 flex items-center justify-center rounded-full bg-white/80 backdrop-blur">
                   <Share2 className="w-4 h-4" />
@@ -121,30 +136,16 @@ export function ShopScreen() {
           {/* Products */}
           <div className="px-4 lg:px-0 pb-24 lg:pb-6">
             <div className="flex items-center justify-between mb-3">
-              <h3>Produits ({shopProducts.length})</h3>
-              <button className="text-sm text-coral flex items-center gap-1">
-                Tout voir <ChevronRight className="w-4 h-4" />
-              </button>
+              <h3>Produits ({displayProducts.length})</h3>
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-              {shopProducts.map((product) => (
+              {displayProducts.map((product) => (
                 <ProductCard
                   key={product.id}
                   {...product}
                   onClick={() => navigate(`/product/${product.id}`)}
                 />
               ))}
-              {/* If shop has few products, show some related */}
-              {shopProducts.length < 3 &&
-                PRODUCTS.filter((p) => p.shopId !== shop.id)
-                  .slice(0, 3 - shopProducts.length)
-                  .map((product) => (
-                    <ProductCard
-                      key={product.id}
-                      {...product}
-                      onClick={() => navigate(`/product/${product.id}`)}
-                    />
-                  ))}
             </div>
           </div>
         </div>
@@ -201,6 +202,8 @@ export function ShopScreen() {
       <BottomNav active="home" onNavigate={(tab) => {
         if (tab === "home") navigate("/home");
         if (tab === "cart") navigate("/cart");
+        if (tab === "messages") navigate("/messages");
+        if (tab === "profile") navigate(isAuthenticated && user?.role === "seller" ? "/dashboard" : "/auth");
       }} />
     </div>
   );

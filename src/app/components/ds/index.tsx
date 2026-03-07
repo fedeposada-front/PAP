@@ -6,7 +6,22 @@ import {
   Check,
   ChevronRight,
   X,
+  Search,
+  ShoppingBag,
+  MessageCircle,
+  User,
 } from "lucide-react";
+
+import logoImg from "figma:asset/95c148e88dae2eaa6d0d6e78178746ac36a9c4e4.png";
+import giftIconImg from "figma:asset/e10acff9e02b58a2a1dd908d0aa5fb754a514b42.png";
+
+// ─── CATEGORY ICON ─────────────────────────────────────
+export function CategoryIcon({ icon, className = "" }: { icon: string; className?: string }) {
+  if (icon === "gift-custom") {
+    return <img src={giftIconImg} alt="Cadeau" className={`inline-block object-contain ${className || "w-5 h-5"}`} />;
+  }
+  return <span className={className}>{icon}</span>;
+}
 
 // ─── BUTTONS ───────────────────────────────────────────
 export function Button({
@@ -258,26 +273,29 @@ export function BottomNav({
   onNavigate: (tab: string) => void;
 }) {
   const tabs = [
-    { id: "home", label: "Explorer", icon: "🗺️" },
-    { id: "search", label: "Recherche", icon: "🔍" },
-    { id: "cart", label: "Panier", icon: "🛒" },
-    { id: "messages", label: "Messages", icon: "💬" },
-    { id: "profile", label: "Profil", icon: "👤" },
+    { id: "home", label: "Explorer", icon: MapPin },
+    { id: "search", label: "Recherche", icon: Search },
+    { id: "cart", label: "Panier", icon: ShoppingBag },
+    { id: "messages", label: "Messages", icon: MessageCircle },
+    { id: "profile", label: "Profil", icon: User },
   ];
   return (
-    <nav className="flex items-center justify-around bg-white border-t border-border px-2 py-1.5 lg:hidden">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          onClick={() => onNavigate(tab.id)}
-          className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg transition-colors ${
-            active === tab.id ? "text-coral" : "text-muted-foreground"
-          }`}
-        >
-          <span className="text-lg">{tab.icon}</span>
-          <span className="text-[10px]">{tab.label}</span>
-        </button>
-      ))}
+    <nav className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around bg-white border-t border-border px-2 py-1.5 lg:hidden">
+      {tabs.map((tab) => {
+        const Icon = tab.icon;
+        return (
+          <button
+            key={tab.id}
+            onClick={() => onNavigate(tab.id)}
+            className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg transition-colors ${
+              active === tab.id ? "text-coral" : "text-muted-foreground"
+            }`}
+          >
+            <Icon className="w-5 h-5" />
+            <span className="text-[10px]">{tab.label}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }
@@ -374,17 +392,14 @@ export function BottomSheet({
 }
 
 // ─── LOGO ──────────────────────────────────────────────
-export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const sizes = { sm: "text-lg", md: "text-2xl", lg: "text-4xl" };
+export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" | "xl" }) {
+  const heights = { sm: "h-8", md: "h-10", lg: "h-16", xl: "h-32" };
   return (
-    <div className={`flex items-center gap-2 ${sizes[size]}`}>
-      <span>🎁</span>
-      <span>
-        <span className="text-bleu">Mon</span>
-        <span className="text-coral">Cadeau</span>
-        <span className="text-green">Local</span>
-      </span>
-    </div>
+    <img
+      src={logoImg}
+      alt="MonCadeauLocal"
+      className={`${heights[size]} w-auto object-contain`}
+    />
   );
 }
 

@@ -2,15 +2,13 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Camera,
-  Plus,
   X,
   MapPin,
   Truck,
   Check,
-  Image as ImageIcon,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { Button, Input, Badge, Header, Chip } from "../ds";
+import { Button, Input, Badge, Header, Chip, CategoryIcon } from "../ds";
 import { CATEGORIES, IMAGES } from "../../data/mock-data";
 
 export function AddProductScreen() {
@@ -126,7 +124,7 @@ export function AddProductScreen() {
                 key={cat.id}
                 active={category === cat.id}
                 onClick={() => setCategory(cat.id)}
-                icon={<span className="text-sm">{cat.icon}</span>}
+                icon={<CategoryIcon icon={cat.icon} className="text-sm w-4 h-4" />}
               >
                 {cat.label}
               </Chip>

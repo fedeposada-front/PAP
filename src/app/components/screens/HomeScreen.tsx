@@ -1,3 +1,8 @@
+import { CATEGORIES, SHOPS, PRODUCTS } from "../../data/mock-data";
+import { ShopMap } from "../ShopMap";
+import { useLocation } from "../LocationContext";
+import { useCart } from "../CartContext";
+import { useAuth } from "../AuthContext";
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router";
 import {
@@ -23,14 +28,14 @@ import {
   BottomSheet,
   Button,
   Logo,
+  CategoryIcon,
 } from "../ds";
-import { CATEGORIES, SHOPS, PRODUCTS } from "../../data/mock-data";
-import { ShopMap } from "../ShopMap";
-import { useLocation } from "../LocationContext";
 
 export function HomeScreen() {
   const navigate = useNavigate();
   const { location } = useLocation();
+  const { totalItems } = useCart();
+  const { user, isAuthenticated } = useAuth();
   const [view, setView] = useState<"map" | "list">("map");
   const [activeCategory, setActiveCategory] = useState("all");
   const [showFilters, setShowFilters] = useState(false);
@@ -71,7 +76,7 @@ export function HomeScreen() {
     CATEGORIES.find((c) => c.id === activeCategory) ?? CATEGORIES[0];
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-background pb-16 lg:pb-0">
       {/* Desktop nav */}
       <header className="hidden lg:flex items-center justify-between px-8 py-3 bg-white border-b border-border">
         <Logo size="sm" />
@@ -94,9 +99,11 @@ export function HomeScreen() {
             className="text-muted-foreground hover:text-foreground relative"
           >
             🛒
-            <span className="absolute -top-1 -right-2 w-4 h-4 bg-coral text-white text-[10px] rounded-full flex items-center justify-center">
-              2
-            </span>
+            {totalItems > 0 && (
+              <span className="absolute -top-1 -right-2 w-4 h-4 bg-coral text-white text-[10px] rounded-full flex items-center justify-center">
+                {totalItems}
+              </span>
+            )}
           </button>
           <button
             onClick={() => navigate("/messages")}
@@ -107,12 +114,12 @@ export function HomeScreen() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => navigate("/auth")}
+            onClick={() => navigate(isAuthenticated && user?.role === "seller" ? "/dashboard" : "/auth?role=seller")}
           >
             Vendre
           </Button>
-          <Button size="sm" onClick={() => navigate("/auth")}>
-            Connexion
+          <Button size="sm" onClick={() => navigate(isAuthenticated ? (user?.role === "seller" ? "/dashboard" : "/home") : "/auth")}>
+            {isAuthenticated ? user?.firstName || "Profil" : "Connexion"}
           </Button>
         </div>
       </header>
@@ -128,9 +135,11 @@ export function HomeScreen() {
               className="relative w-10 h-10 flex items-center justify-center rounded-full hover:bg-muted transition-colors"
             >
               <ShoppingBag className="w-5 h-5 text-foreground" />
-              <span className="absolute top-1 right-1 w-4 h-4 bg-coral text-white text-[10px] rounded-full flex items-center justify-center">
-                2
-              </span>
+              {totalItems > 0 && (
+                <span className="absolute top-1 right-1 w-4 h-4 bg-coral text-white text-[10px] rounded-full flex items-center justify-center">
+                  {totalItems}
+                </span>
+              )}
             </button>
             <button
               onClick={() => navigate("/messages")}
@@ -170,7 +179,7 @@ export function HomeScreen() {
           onClick={() => setShowCategories(true)}
           className="flex-1 flex items-center gap-2 bg-input-background rounded-xl px-3.5 py-2.5 text-sm text-left"
         >
-          <span className="text-base">{activeCat.icon}</span>
+          <CategoryIcon icon={activeCat.icon} className="text-base w-5 h-5" />
           <span className="flex-1 truncate">
             {activeCat.id === "all"
               ? "Toutes les idées cadeaux"
@@ -195,7 +204,7 @@ export function HomeScreen() {
               key={cat.id}
               active={activeCategory === cat.id}
               onClick={() => setActiveCategory(cat.id)}
-              icon={<span className="text-sm">{cat.icon}</span>}
+              icon={<CategoryIcon icon={cat.icon} className="text-sm w-4 h-4" />}
             >
               {cat.label}
             </Chip>
@@ -400,7 +409,7 @@ export function HomeScreen() {
       {/* Mobile bottom nav */}
       <BottomNav active="home" onNavigate={(tab) => {
         if (tab === "cart") navigate("/cart");
-        if (tab === "profile") navigate("/auth");
+        if (tab === "profile") navigate(isAuthenticated && user?.role === "seller" ? "/dashboard" : "/auth");
         if (tab === "messages") navigate("/messages");
       }} />
 
@@ -424,7 +433,7 @@ export function HomeScreen() {
                   : "bg-input-background text-foreground hover:bg-muted border border-transparent"
               }`}
             >
-              <span className="text-lg">{cat.icon}</span>
+              <CategoryIcon icon={cat.icon} className="text-lg w-5 h-5" />
               <span className="flex-1 leading-tight">
                 {cat.id === "all"
                   ? "Toutes les idées cadeaux"

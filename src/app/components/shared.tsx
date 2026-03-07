@@ -1,6 +1,8 @@
-import { MapPin, Star, Clock, Truck, Gift, ShoppingBag } from "lucide-react";
+import { MapPin, Star, Clock, Truck, ShoppingBag } from "lucide-react";
 import type { Shop, Product } from "../data/mock-data";
 import { CATEGORIES } from "../data/mock-data";
+import logoImg from "figma:asset/95c148e88dae2eaa6d0d6e78178746ac36a9c4e4.png";
+import giftIcon from "figma:asset/e10acff9e02b58a2a1dd908d0aa5fb754a514b42.png";
 
 function getCategoryLabel(id: string): string {
   return CATEGORIES.find((c) => c.id === id)?.label ?? id;
@@ -8,18 +10,22 @@ function getCategoryLabel(id: string): string {
 
 // Logo Component
 export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const sizes = { sm: "text-lg", md: "text-2xl", lg: "text-4xl" };
-  const iconSizes = { sm: 18, md: 24, lg: 36 };
+  const heights = { sm: "h-8", md: "h-10", lg: "h-16" };
   return (
-    <div className="flex items-center gap-2">
-      <div className="bg-primary rounded-xl p-1.5 flex items-center justify-center">
-        <Gift size={iconSizes[size]} className="text-primary-foreground" />
-      </div>
-      <span className={`${sizes[size]} tracking-tight`} style={{ fontFamily: "var(--font-family-display)" }}>
-        <span className="text-bleu">Mon</span><span className="text-primary">Cadeau</span><span className="text-green">Local</span>
-      </span>
-    </div>
+    <img
+      src={logoImg}
+      alt="MonCadeauLocal"
+      className={`${heights[size]} w-auto object-contain`}
+    />
   );
+}
+
+// Gift Icon - renders custom gift image or emoji
+export function CategoryIcon({ icon, className = "" }: { icon: string; className?: string }) {
+  if (icon === "gift-custom") {
+    return <img src={giftIcon} alt="Cadeau" className={`inline-block object-contain ${className || "w-5 h-5"}`} />;
+  }
+  return <span className={className}>{icon}</span>;
 }
 
 // Badge Component

@@ -1,7 +1,8 @@
-import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 import { Mail, Lock, Eye, EyeOff, ShoppingBag, Store } from "lucide-react";
 import { Button, Input, Logo, Header } from "../ds";
+import { useAuth } from "../AuthContext";
 
 function GoogleIcon({ className = "w-5 h-5" }: { className?: string }) {
   return (
@@ -36,16 +37,117 @@ function AppleIcon({ className = "w-5 h-5" }: { className?: string }) {
 
 export function AuthScreen() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { login, isAuthenticated, user, logout } = useAuth();
   const [role, setRole] = useState<"buyer" | "seller" | null>(null);
   const [mode, setMode] = useState<"login" | "signup">("signup");
   const [showPassword, setShowPassword] = useState(false);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [shopName, setShopName] = useState("");
+
+  // Pre-select role from URL params (e.g. /auth?role=seller)
+  useEffect(() => {
+    const roleParam = searchParams.get("role");
+    if (roleParam === "seller" || roleParam === "buyer") {
+      setRole(roleParam);
+    }
+  }, [searchParams]);
+
+  // If authenticated seller, redirect to dashboard
+  useEffect(() => {
+    if (isAuthenticated && user?.role === "seller") {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [isAuthenticated, user, navigate]);
+
+  // If user is already logged in, show profile
+  if (isAuthenticated && user) {
+    // Seller is being redirected to dashboard
+    if (user.role === "seller") return null;
+
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <Header title="Mon profil" onBack={() => navigate(-1)} />
+        <div className="flex-1 flex flex-col items-center px-6 py-8 max-w-md mx-auto w-full">
+          <div className="w-20 h-20 bg-coral-light rounded-full flex items-center justify-center mb-4">
+            <span className="text-2xl">
+              {user.firstName[0]}{user.lastName[0]}
+            </span>
+          </div>
+          <h2 className="mb-1">{user.firstName} {user.lastName}</h2>
+          <p className="text-sm text-muted-foreground mb-1">{user.email}</p>
+          <p className="text-xs text-muted-foreground mb-8">
+            {user.role === "seller" ? "Compte commerçant" : "Compte acheteur"}
+          </p>
+
+          <div className="w-full space-y-3">
+            {user.role === "seller" && (
+              <Button
+                fullWidth
+                variant="accent"
+                onClick={() => navigate("/dashboard")}
+              >
+                Mon tableau de bord
+              </Button>
+            )}
+            <Button
+              fullWidth
+              variant="outline"
+              onClick={() => navigate("/home")}
+            >
+              Explorer les boutiques
+            </Button>
+            <Button
+              fullWidth
+              variant="outline"
+              onClick={() => navigate("/cart")}
+            >
+              Mon panier
+            </Button>
+            <Button
+              fullWidth
+              variant="outline"
+              onClick={() => navigate("/messages")}
+            >
+              Mes messages
+            </Button>
+            {user.role === "seller" && (
+              <Button
+                fullWidth
+                variant="outline"
+                onClick={() => navigate("/settings")}
+              >
+                Paramètres boutique
+              </Button>
+            )}
+            <div className="pt-4">
+              <Button
+                fullWidth
+                variant="ghost"
+                className="text-destructive"
+                onClick={() => {
+                  logout();
+                  setRole(null);
+                }}
+              >
+                Se déconnecter
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!role) {
     return (
       <div className="min-h-screen flex flex-col bg-background">
         <Header onBack={() => navigate(-1)} />
         <div className="flex-1 flex flex-col items-center justify-center px-6 max-w-md mx-auto w-full">
-          <Logo size="md" />
+          <Logo size="xl" />
           <h2 className="mt-6 mb-2 text-center">Bienvenue !</h2>
           <p className="text-muted-foreground text-center text-sm mb-8">
             Comment souhaitez-vous utiliser MonCadeauLocal ?
@@ -87,6 +189,24 @@ export function AuthScreen() {
     );
   }
 
+  const handleAuth = () => {
+    const newUser = {
+      id: `u-${Date.now()}`,
+      firstName: firstName || "Marie",
+      lastName: lastName || "Durand",
+      email: email || "marie@example.com",
+      role: role,
+      shopName: role === "seller" ? (shopName || "Ma Boutique") : undefined,
+    };
+    login(newUser);
+
+    if (role === "seller") {
+      navigate("/siret");
+    } else {
+      navigate("/home");
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <Header
@@ -120,20 +240,34 @@ export function AuthScreen() {
         <div className="space-y-3">
           {mode === "signup" && (
             <div className="flex gap-3">
-              <Input placeholder="Prénom" className="flex-1" />
-              <Input placeholder="Nom" className="flex-1" />
+              <Input
+                placeholder="Prénom"
+                className="flex-1"
+                value={firstName}
+                onChange={setFirstName}
+              />
+              <Input
+                placeholder="Nom"
+                className="flex-1"
+                value={lastName}
+                onChange={setLastName}
+              />
             </div>
           )}
           <Input
             placeholder="Adresse e-mail"
             type="email"
             icon={<Mail className="w-4 h-4" />}
+            value={email}
+            onChange={setEmail}
           />
           <div className="relative">
             <Input
               placeholder="Mot de passe"
               type={showPassword ? "text" : "password"}
               icon={<Lock className="w-4 h-4" />}
+              value={password}
+              onChange={setPassword}
             />
             <button
               onClick={() => setShowPassword(!showPassword)}
@@ -147,7 +281,12 @@ export function AuthScreen() {
             </button>
           </div>
           {mode === "signup" && role === "seller" && (
-            <Input placeholder="Nom de votre entreprise" icon={<Store className="w-4 h-4" />} />
+            <Input
+              placeholder="Nom de votre entreprise"
+              icon={<Store className="w-4 h-4" />}
+              value={shopName}
+              onChange={setShopName}
+            />
           )}
         </div>
 
@@ -156,13 +295,7 @@ export function AuthScreen() {
           size="lg"
           className="mt-6"
           variant={role === "seller" ? "accent" : "primary"}
-          onClick={() => {
-            if (role === "seller") {
-              navigate("/siret");
-            } else {
-              navigate("/home");
-            }
-          }}
+          onClick={handleAuth}
         >
           {mode === "login" ? "Se connecter" : "S'inscrire"}
         </Button>
@@ -177,26 +310,14 @@ export function AuthScreen() {
 
         <div className="space-y-3">
           <button
-            onClick={() => {
-              if (role === "seller") {
-                navigate("/siret");
-              } else {
-                navigate("/home");
-              }
-            }}
+            onClick={handleAuth}
             className="w-full flex items-center justify-center gap-3 bg-white border border-border rounded-xl px-5 py-3.5 hover:bg-muted hover:shadow-sm transition-all group"
           >
             <GoogleIcon />
             <span>Continuer avec Google</span>
           </button>
           <button
-            onClick={() => {
-              if (role === "seller") {
-                navigate("/siret");
-              } else {
-                navigate("/home");
-              }
-            }}
+            onClick={handleAuth}
             className="w-full flex items-center justify-center gap-3 bg-white border border-border rounded-xl px-5 py-3.5 hover:bg-muted hover:shadow-sm transition-all group"
           >
             <AppleIcon />

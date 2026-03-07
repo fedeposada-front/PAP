@@ -1,5 +1,7 @@
-import { useState, useRef } from "react";
+import React, { useState, useRef } from "react";
 import { useNavigate } from "react-router";
+import { Button, Header, Input, Badge } from "../ds";
+import { useAuth } from "../AuthContext";
 import {
   Building2,
   MapPin,
@@ -22,7 +24,6 @@ import {
   Copy,
   Coffee,
 } from "lucide-react";
-import { Button, Header, Input, Badge } from "../ds";
 
 type SettingsTab = "shop" | "account" | "notifications";
 
@@ -57,6 +58,7 @@ const DEFAULT_SCHEDULE: Record<string, DaySchedule> = {
 
 export function SettingsScreen() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const [activeTab, setActiveTab] = useState<SettingsTab>("shop");
   const [saved, setSaved] = useState(false);
   const [bannerImage, setBannerImage] = useState<string | null>(null);
@@ -620,7 +622,7 @@ export function SettingsScreen() {
               <div className="bg-white rounded-2xl border border-red-200 shadow-sm p-4 space-y-3">
                 <h4 className="text-red-500">Zone sensible</h4>
                 <button
-                  onClick={() => navigate("/auth")}
+                  onClick={() => logout()}
                   className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-red-50 transition-colors text-red-500"
                 >
                   <LogOut className="w-4 h-4" />
@@ -702,7 +704,10 @@ function ToggleRow({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <label className="flex items-center justify-between gap-3 py-2.5 cursor-pointer select-none">
+    <div
+      onClick={() => onChange(!checked)}
+      className="flex items-center justify-between gap-3 py-2.5 cursor-pointer select-none"
+    >
       <div className="flex items-center gap-3 min-w-0">
         <span className="text-muted-foreground flex-shrink-0">{icon}</span>
         <div className="min-w-0">
@@ -723,6 +728,6 @@ function ToggleRow({
           }`}
         />
       </div>
-    </label>
+    </div>
   );
 }

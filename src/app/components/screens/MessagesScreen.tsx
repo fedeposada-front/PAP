@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from "react-router";
 import { Send, Image, ChevronRight } from "lucide-react";
 import { Header, BottomNav, Badge } from "../ds";
 import { SHOPS } from "../../data/mock-data";
+import { useAuth } from "../AuthContext";
 
 interface Message {
   id: string;
@@ -27,10 +28,11 @@ const MOCK_CONVERSATIONS: Record<string, Message[]> = {
 // Conversation list view
 function ConversationList({ onSelect }: { onSelect: (shopId: string) => void }) {
   const navigate = useNavigate();
+  const { user, isAuthenticated } = useAuth();
   const conversations = SHOPS.filter((s) => MOCK_CONVERSATIONS[s.id]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-background pb-16">
       <Header title="Messages" />
       <div className="flex-1 px-4 py-3">
         {conversations.length === 0 ? (
@@ -110,7 +112,7 @@ function ConversationList({ onSelect }: { onSelect: (shopId: string) => void }) 
         onNavigate={(tab) => {
           if (tab === "home") navigate("/home");
           if (tab === "cart") navigate("/cart");
-          if (tab === "profile") navigate("/auth");
+          if (tab === "profile") navigate(isAuthenticated && user?.role === "seller" ? "/dashboard" : "/auth");
           if (tab === "messages") navigate("/messages");
         }}
       />
