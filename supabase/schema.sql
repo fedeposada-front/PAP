@@ -13,6 +13,21 @@ begin
 end;
 $$;
 
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  first_name text,
+  last_name text,
+  roles text[] not null default array['buyer']::text[],
+  active_role text not null default 'buyer',
+  shop_name text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint profiles_roles_not_empty check (array_length(roles, 1) >= 1),
+  constraint profiles_roles_allowed check (roles <@ array['buyer','seller']::text[]),
+  constraint profiles_active_role_allowed check (active_role = any (array['buyer','seller']::text[])),
+  constraint profiles_active_role_in_roles check (active_role = any (roles))
+);
+
 create table if not exists public.shops (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid references auth.users(id) on delete set null,
@@ -121,6 +136,7 @@ create table if not exists public.ad_clicks (
 
 create index if not exists idx_shops_city on public.shops(city);
 create index if not exists idx_shops_category on public.shops(category);
+create index if not exists idx_profiles_active_role on public.profiles(active_role);
 create index if not exists idx_products_shop_id on public.products(shop_id);
 create index if not exists idx_products_category on public.products(category);
 create index if not exists idx_lead_events_shop_id on public.lead_events(shop_id);
@@ -129,6 +145,11 @@ create index if not exists idx_lead_events_created_at on public.lead_events(crea
 create index if not exists idx_ads_placement_city on public.ads(placement, city);
 create index if not exists idx_ad_impressions_ad_id on public.ad_impressions(ad_id);
 create index if not exists idx_ad_clicks_ad_id on public.ad_clicks(ad_id);
+
+drop trigger if exists trg_profiles_updated_at on public.profiles;
+create trigger trg_profiles_updated_at
+before update on public.profiles
+for each row execute function public.set_updated_at();
 
 drop trigger if exists trg_shops_updated_at on public.shops;
 create trigger trg_shops_updated_at
@@ -145,12 +166,35 @@ create trigger trg_ads_updated_at
 before update on public.ads
 for each row execute function public.set_updated_at();
 
+alter table public.profiles enable row level security;
 alter table public.shops enable row level security;
 alter table public.products enable row level security;
 alter table public.lead_events enable row level security;
 alter table public.ads enable row level security;
 alter table public.ad_impressions enable row level security;
 alter table public.ad_clicks enable row level security;
+
+drop policy if exists "users can read own profile" on public.profiles;
+create policy "users can read own profile"
+on public.profiles
+for select
+to authenticated
+using (auth.uid() = id);
+
+drop policy if exists "users can insert own profile" on public.profiles;
+create policy "users can insert own profile"
+on public.profiles
+for insert
+to authenticated
+with check (auth.uid() = id);
+
+drop policy if exists "users can update own profile" on public.profiles;
+create policy "users can update own profile"
+on public.profiles
+for update
+to authenticated
+using (auth.uid() = id)
+with check (auth.uid() = id);
 
 drop policy if exists "shops are readable by everyone" on public.shops;
 create policy "shops are readable by everyone"

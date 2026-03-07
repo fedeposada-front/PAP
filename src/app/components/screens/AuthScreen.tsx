@@ -38,7 +38,7 @@ function AppleIcon({ className = "w-5 h-5" }: { className?: string }) {
 export function AuthScreen() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { login, isAuthenticated, user, logout } = useAuth();
+  const { signIn, signUp, isAuthenticated, isLoading, user, logout } = useAuth();
   const [role, setRole] = useState<"buyer" | "seller" | null>(null);
   const [mode, setMode] = useState<"login" | "signup">("signup");
   const [showPassword, setShowPassword] = useState(false);
@@ -47,6 +47,8 @@ export function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [shopName, setShopName] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Pre-select role from URL params (e.g. /auth?role=seller)
   useEffect(() => {
@@ -79,20 +81,9 @@ export function AuthScreen() {
           </div>
           <h2 className="mb-1">{user.firstName} {user.lastName}</h2>
           <p className="text-sm text-muted-foreground mb-1">{user.email}</p>
-          <p className="text-xs text-muted-foreground mb-8">
-            {user.role === "seller" ? "Compte commerçant" : "Compte acheteur"}
-          </p>
+          <p className="text-xs text-muted-foreground mb-8">Compte acheteur</p>
 
           <div className="w-full space-y-3">
-            {user.role === "seller" && (
-              <Button
-                fullWidth
-                variant="accent"
-                onClick={() => navigate("/dashboard")}
-              >
-                Mon tableau de bord
-              </Button>
-            )}
             <Button
               fullWidth
               variant="outline"
@@ -114,22 +105,13 @@ export function AuthScreen() {
             >
               Mes messages
             </Button>
-            {user.role === "seller" && (
-              <Button
-                fullWidth
-                variant="outline"
-                onClick={() => navigate("/settings")}
-              >
-                Paramètres boutique
-              </Button>
-            )}
             <div className="pt-4">
               <Button
                 fullWidth
                 variant="ghost"
                 className="text-destructive"
-                onClick={() => {
-                  logout();
+                onClick={async () => {
+                  await logout();
                   setRole(null);
                 }}
               >
@@ -150,7 +132,7 @@ export function AuthScreen() {
           <Logo size="xl" />
           <h2 className="mt-6 mb-2 text-center">Bienvenue !</h2>
           <p className="text-muted-foreground text-center text-sm mb-8">
-            Comment souhaitez-vous utiliser MonCadeauLocal ?
+            Comment souhaitez-vous utiliser Mon cadeau local ?
           </p>
 
           <div className="w-full space-y-4">
@@ -190,22 +172,46 @@ export function AuthScreen() {
   }
 
   const handleAuth = () => {
-    const newUser = {
-      id: `u-${Date.now()}`,
-      firstName: firstName || "Marie",
-      lastName: lastName || "Durand",
-      email: email || "marie@example.com",
-      role: role,
-      shopName: role === "seller" ? (shopName || "Ma Boutique") : undefined,
-    };
-    login(newUser);
+    const run = async () => {
+      if (!role) return;
+      setIsSubmitting(true);
+      setErrorMessage(null);
+      try {
+        if (mode === "signup") {
+          await signUp({
+            email: email.trim(),
+            password,
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            preferredRole: role,
+            shopName: role === "seller" ? shopName.trim() : undefined,
+          });
+        } else {
+          await signIn({
+            email: email.trim(),
+            password,
+            preferredRole: role,
+          });
+        }
 
-    if (role === "seller") {
-      navigate("/siret");
-    } else {
-      navigate("/home");
-    }
+        if (role === "seller") {
+          navigate("/siret");
+        } else {
+          navigate("/home");
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Impossible de se connecter pour le moment.";
+        setErrorMessage(message);
+      } finally {
+        setIsSubmitting(false);
+      }
+    };
+
+    void run();
   };
+
+  const isFormInvalid = !email.trim() || !password.trim() || (mode === "signup" && (!firstName.trim() || !lastName.trim()));
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -215,6 +221,9 @@ export function AuthScreen() {
       />
 
       <div className="flex-1 flex flex-col px-6 py-8 max-w-md mx-auto w-full">
+        {isLoading && (
+          <p className="text-sm text-muted-foreground mb-4 text-center">Chargement du compte...</p>
+        )}
         <div className="text-center mb-8">
           <div
             className={`w-16 h-16 ${
@@ -239,16 +248,14 @@ export function AuthScreen() {
 
         <div className="space-y-3">
           {mode === "signup" && (
-            <div className="flex gap-3">
+            <div className="space-y-3">
               <Input
                 placeholder="Prénom"
-                className="flex-1"
                 value={firstName}
                 onChange={setFirstName}
               />
               <Input
                 placeholder="Nom"
-                className="flex-1"
                 value={lastName}
                 onChange={setLastName}
               />
@@ -296,9 +303,14 @@ export function AuthScreen() {
           className="mt-6"
           variant={role === "seller" ? "accent" : "primary"}
           onClick={handleAuth}
+          disabled={isSubmitting || isLoading || isFormInvalid}
         >
-          {mode === "login" ? "Se connecter" : "S'inscrire"}
+          {isSubmitting ? "Chargement..." : mode === "login" ? "Se connecter" : "S'inscrire"}
         </Button>
+
+        {errorMessage && (
+          <p className="text-sm text-destructive mt-3 text-center">{errorMessage}</p>
+        )}
 
         <div className="relative my-6">
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
@@ -311,6 +323,7 @@ export function AuthScreen() {
         <div className="space-y-3">
           <button
             onClick={handleAuth}
+            disabled={isSubmitting || isLoading}
             className="w-full flex items-center justify-center gap-3 bg-white border border-border rounded-xl px-5 py-3.5 hover:bg-muted hover:shadow-sm transition-all group"
           >
             <GoogleIcon />
@@ -318,6 +331,7 @@ export function AuthScreen() {
           </button>
           <button
             onClick={handleAuth}
+            disabled={isSubmitting || isLoading}
             className="w-full flex items-center justify-center gap-3 bg-white border border-border rounded-xl px-5 py-3.5 hover:bg-muted hover:shadow-sm transition-all group"
           >
             <AppleIcon />

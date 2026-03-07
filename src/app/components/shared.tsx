@@ -10,12 +10,13 @@ function getCategoryLabel(id: string): string {
 
 // Logo Component
 export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const heights = { sm: "h-8", md: "h-10", lg: "h-16" };
+  const heights = { sm: 32, md: 40, lg: 64 };
   return (
     <img
-      src={logoImg}
+      src={logoImg.src}
       alt="MonCadeauLocal"
-      className={`${heights[size]} w-auto object-contain`}
+      className="block w-auto max-w-full object-contain"
+      style={{ height: `${heights[size]}px` }}
     />
   );
 }
@@ -23,7 +24,7 @@ export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
 // Gift Icon - renders custom gift image or emoji
 export function CategoryIcon({ icon, className = "" }: { icon: string; className?: string }) {
   if (icon === "gift-custom") {
-    return <img src={giftIcon} alt="Cadeau" className={`inline-block object-contain ${className || "w-5 h-5"}`} />;
+    return <img src={giftIcon.src} alt="Cadeau" className={`inline-block object-contain ${className || "w-5 h-5"}`} />;
   }
   return <span className={className}>{icon}</span>;
 }

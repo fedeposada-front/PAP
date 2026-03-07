@@ -12,8 +12,8 @@
 ## 3) Configurer le frontend
 - Copie `.env.example` en `.env.local`.
 - Renseigne:
-  - `VITE_SUPABASE_URL`
-  - `VITE_SUPABASE_ANON_KEY`
+  - `NEXT_PUBLIC_SUPABASE_URL`
+  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
 ## 4) Vérifier les tables
 - Dans `Table Editor`, vérifie la présence de:

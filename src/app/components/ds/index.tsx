@@ -18,7 +18,7 @@ import giftIconImg from "../../../assets/gift-icon.png";
 // ─── CATEGORY ICON ─────────────────────────────────────
 export function CategoryIcon({ icon, className = "" }: { icon: string; className?: string }) {
   if (icon === "gift-custom") {
-    return <img src={giftIconImg} alt="Cadeau" className={`inline-block object-contain ${className || "w-5 h-5"}`} />;
+    return <img src={giftIconImg.src} alt="Cadeau" className={`inline-block object-contain ${className || "w-5 h-5"}`} />;
   }
   return <span className={className}>{icon}</span>;
 }
@@ -142,7 +142,7 @@ export function Input({
 }) {
   return (
     <div
-      className={`flex items-center gap-2.5 bg-input-background rounded-xl px-4 py-3 ${className}`}
+      className={`flex min-h-14 items-center gap-2.5 bg-input-background rounded-xl px-4 py-3 ${className}`}
     >
       {icon && <span className="text-muted-foreground">{icon}</span>}
       <input
@@ -150,7 +150,7 @@ export function Input({
         placeholder={placeholder}
         value={value ?? ""}
         onChange={(e) => onChange?.(e.target.value)}
-        className="flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+        className="min-w-0 flex-1 bg-transparent leading-tight outline-none placeholder:text-muted-foreground"
       />
     </div>
   );
@@ -393,12 +393,13 @@ export function BottomSheet({
 
 // ─── LOGO ──────────────────────────────────────────────
 export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" | "xl" }) {
-  const heights = { sm: "h-8", md: "h-10", lg: "h-16", xl: "h-32" };
+  const heights = { sm: 32, md: 40, lg: 64, xl: 128 };
   return (
     <img
-      src={logoHorizontalImg}
+      src={logoHorizontalImg.src}
       alt="MonCadeauLocal"
-      className={`${heights[size]} w-auto object-contain`}
+      className="block w-auto max-w-full object-contain"
+      style={{ height: `${heights[size]}px` }}
     />
   );
 }

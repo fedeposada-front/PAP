@@ -1,4 +1,8 @@
 @import './fonts.css';
-@import './tailwind.css';
+@import 'tailwindcss';
+@source '../**/*.{js,ts,jsx,tsx}';
+@source '../../app/**/*.{js,ts,jsx,tsx}';
+
+@import 'tw-animate-css';
 @import './theme.css';
 @import 'leaflet/dist/leaflet.css';

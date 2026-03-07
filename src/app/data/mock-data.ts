@@ -382,3 +382,21 @@ export const ONBOARDING_SLIDES = [
     description: "Chaque achat fait vivre un artisan local. Pas de culpabilité, juste le plaisir de bien choisir.",
   },
 ];
+
+export const SELLER_ONBOARDING_SLIDES = [
+  {
+    emoji: "🏪",
+    title: "Attirez plus de clients autour de votre boutique",
+    description: "Soyez visible quand un client cherche un cadeau par occasion, budget et proximité.",
+  },
+  {
+    emoji: "📦",
+    title: "Publiez vos produits en quelques minutes",
+    description: "Créez votre vitrine, ajoutez vos nouveautés et mettez en avant les produits disponibles aujourd'hui.",
+  },
+  {
+    emoji: "📈",
+    title: "Suivez vos leads simplement",
+    description: "Mesurez les vues, clics et demandes pour savoir ce qui génère vraiment des ventes locales.",
+  },
+];

@@ -1,6 +1,6 @@
 import { IMAGES } from "../data/mock-data";
 
-export type AdPlacement = "home_sidebar";
+export type AdPlacement = string;
 
 export interface SponsoredAd {
   id: string;
@@ -46,8 +46,8 @@ const FALLBACK_ADS: SponsoredAd[] = [
   },
 ];
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const SESSION_STORAGE_KEY = "mcl_ads_session_v1";
 
 function hasSupabaseConfig() {
@@ -137,12 +137,18 @@ export async function fetchSponsoredAd(
 
   try {
     const rows = await supabaseRequest<AdApiRow[]>(
-      `ads?select=id,title,subtitle,image_url,cta_label,target_url,placement,city,shop_id,priority,starts_at,ends_at,is_active&placement=eq.${placement}&order=priority.desc,created_at.desc`
+      "ads?select=id,title,subtitle,image_url,cta_label,target_url,placement,city,shop_id,priority,starts_at,ends_at,is_active&order=priority.desc,created_at.desc"
     );
 
-    const ad = rows
-      .filter((row) => isAdActive(row) && matchesCity(row.city, city))
-      .map(normalizeAd)[0];
+    const activeRows = rows.filter((row) => isAdActive(row));
+
+    const preferredRow =
+      activeRows.find((row) => row.placement === placement && matchesCity(row.city, city)) ??
+      activeRows.find((row) => matchesCity(row.city, city)) ??
+      activeRows.find((row) => row.placement === placement) ??
+      activeRows[0];
+
+    const ad = preferredRow ? normalizeAd(preferredRow) : null;
 
     return ad ?? null;
   } catch {

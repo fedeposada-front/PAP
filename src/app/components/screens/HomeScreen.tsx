@@ -322,21 +322,37 @@ export function HomeScreen() {
 
       {/* ─── MAIN CONTENT ─── */}
       <div className="flex-1 overflow-y-auto">
-        {/* Desktop: side-by-side layout */}
-        <div className="hidden lg:flex px-8 py-4 gap-6">
-          <div className="flex-1 min-w-0">
-            <div className="rounded-2xl overflow-hidden border border-border relative">
-              <div className="h-[calc(100vh-340px)] min-h-[420px]">
-                <ShopMap
-                  shops={filteredShops}
-                  onShopClick={(id) => navigate(`/shop/${id}`)}
-                  center={mapCenter}
-                  cityLabel={location.cityName}
-                />
+        {/* Desktop layout */}
+        <div className="hidden lg:block px-8 py-4">
+          <div className="flex gap-6">
+            <div className="flex-1 min-w-0">
+              <div className="rounded-2xl overflow-hidden border border-border relative">
+                <div className="h-[calc(100vh-340px)] min-h-[420px]">
+                  <ShopMap
+                    shops={filteredShops}
+                    onShopClick={(id) => navigate(`/shop/${id}`)}
+                    center={mapCenter}
+                    cityLabel={location.cityName}
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="mt-6">
+            {/* Right sidebar: shops */}
+            <div className="w-[420px] flex-shrink-0 space-y-3 overflow-y-auto max-h-[calc(100vh-340px)]">
+              <h3 className="mb-1">Boutiques à proximité</h3>
+              {filteredShops.map((shop) => (
+                <ShopCard
+                  key={shop.id}
+                  {...shop}
+                  onClick={() => navigate(`/shop/${shop.id}`)}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-6 flex gap-6">
+            <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-3">
                 <Sparkles className="w-4 h-4 text-coral" />
                 <h3>Derniers produits ajoutes pres de {location.cityName}</h3>
@@ -351,40 +367,32 @@ export function HomeScreen() {
                 ))}
               </div>
             </div>
-          </div>
 
-          {/* Right sidebar: shops */}
-          <div className="w-[420px] flex-shrink-0 space-y-3 overflow-y-auto max-h-[calc(100vh-340px)]">
-            <h3 className="mb-1">Boutiques à proximité</h3>
-            {filteredShops.map((shop) => (
-              <ShopCard
-                key={shop.id}
-                {...shop}
-                onClick={() => navigate(`/shop/${shop.id}`)}
-              />
-            ))}
-            {sponsoredAd && (
-              <SponsoredCard
-                ad={{ ...sponsoredAd, city: location.cityName }}
-                onClick={() => {
-                  void trackAdClick({ ...sponsoredAd, city: location.cityName });
+            {/* Ad slot below the map, next to recent products */}
+            <div className="w-[420px] flex-shrink-0">
+              {sponsoredAd && (
+                <SponsoredCard
+                  ad={{ ...sponsoredAd, city: location.cityName }}
+                  onClick={() => {
+                    void trackAdClick({ ...sponsoredAd, city: location.cityName });
 
-                  if (sponsoredAd.targetUrl?.startsWith("/")) {
-                    navigate(sponsoredAd.targetUrl);
-                    return;
-                  }
+                    if (sponsoredAd.targetUrl?.startsWith("/")) {
+                      navigate(sponsoredAd.targetUrl);
+                      return;
+                    }
 
-                  if (sponsoredAd.targetUrl) {
-                    window.open(sponsoredAd.targetUrl, "_blank", "noopener,noreferrer");
-                    return;
-                  }
+                    if (sponsoredAd.targetUrl) {
+                      window.open(sponsoredAd.targetUrl, "_blank", "noopener,noreferrer");
+                      return;
+                    }
 
-                  if (sponsoredAd.shopId) {
-                    navigate(`/shop/${sponsoredAd.shopId}`);
-                  }
-                }}
-              />
-            )}
+                    if (sponsoredAd.shopId) {
+                      navigate(`/shop/${sponsoredAd.shopId}`);
+                    }
+                  }}
+                />
+              )}
+            </div>
           </div>
         </div>
 
