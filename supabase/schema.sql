@@ -20,13 +20,39 @@ create table if not exists public.profiles (
   roles text[] not null default array['buyer']::text[],
   active_role text not null default 'buyer',
   shop_name text,
+  shop_address text,
+  siret_number text,
+  siret_verified boolean not null default false,
+  seller_attested boolean not null default false,
+  seller_vacation_mode boolean not null default false,
+  seller_deactivated boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint profiles_roles_not_empty check (array_length(roles, 1) >= 1),
   constraint profiles_roles_allowed check (roles <@ array['buyer','seller']::text[]),
   constraint profiles_active_role_allowed check (active_role = any (array['buyer','seller']::text[])),
-  constraint profiles_active_role_in_roles check (active_role = any (roles))
+  constraint profiles_active_role_in_roles check (active_role = any (roles)),
+  constraint profiles_siret_format check (siret_number is null or siret_number ~ '^[0-9]{14}$')
 );
+
+alter table public.profiles add column if not exists siret_number text;
+alter table public.profiles add column if not exists siret_verified boolean not null default false;
+alter table public.profiles add column if not exists shop_address text;
+alter table public.profiles add column if not exists seller_attested boolean not null default false;
+alter table public.profiles add column if not exists seller_vacation_mode boolean not null default false;
+alter table public.profiles add column if not exists seller_deactivated boolean not null default false;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'profiles_siret_format'
+  ) then
+    alter table public.profiles
+      add constraint profiles_siret_format
+      check (siret_number is null or siret_number ~ '^[0-9]{14}$');
+  end if;
+end
+$$;
 
 create table if not exists public.shops (
   id uuid primary key default gen_random_uuid(),
@@ -66,6 +92,20 @@ create table if not exists public.products (
   is_published boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table if not exists public.favorite_products (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  product_id uuid not null references public.products(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, product_id)
+);
+
+create table if not exists public.followed_shops (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  shop_id uuid not null references public.shops(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, shop_id)
 );
 
 do $$
@@ -137,8 +177,11 @@ create table if not exists public.ad_clicks (
 create index if not exists idx_shops_city on public.shops(city);
 create index if not exists idx_shops_category on public.shops(category);
 create index if not exists idx_profiles_active_role on public.profiles(active_role);
+create index if not exists idx_profiles_siret_verified on public.profiles(siret_verified);
 create index if not exists idx_products_shop_id on public.products(shop_id);
 create index if not exists idx_products_category on public.products(category);
+create index if not exists idx_favorite_products_user_created_at on public.favorite_products(user_id, created_at desc);
+create index if not exists idx_followed_shops_user_created_at on public.followed_shops(user_id, created_at desc);
 create index if not exists idx_lead_events_shop_id on public.lead_events(shop_id);
 create index if not exists idx_lead_events_type on public.lead_events(event_type);
 create index if not exists idx_lead_events_created_at on public.lead_events(created_at desc);
@@ -169,10 +212,28 @@ for each row execute function public.set_updated_at();
 alter table public.profiles enable row level security;
 alter table public.shops enable row level security;
 alter table public.products enable row level security;
+alter table public.favorite_products enable row level security;
+alter table public.followed_shops enable row level security;
 alter table public.lead_events enable row level security;
 alter table public.ads enable row level security;
 alter table public.ad_impressions enable row level security;
 alter table public.ad_clicks enable row level security;
+
+grant usage on schema public to anon, authenticated, service_role;
+
+grant select on public.shops to anon;
+grant select on public.products to anon;
+grant select on public.ads to anon;
+
+grant select, insert, update, delete on public.profiles to authenticated;
+grant select, insert, update, delete on public.shops to authenticated;
+grant select, insert, update, delete on public.products to authenticated;
+grant select, insert, update, delete on public.favorite_products to authenticated;
+grant select, insert, update, delete on public.followed_shops to authenticated;
+grant select, insert, update, delete on public.lead_events to authenticated;
+grant select, insert, update, delete on public.ads to authenticated;
+grant select, insert, update, delete on public.ad_impressions to authenticated;
+grant select, insert, update, delete on public.ad_clicks to authenticated;
 
 drop policy if exists "users can read own profile" on public.profiles;
 create policy "users can read own profile"
@@ -229,6 +290,48 @@ create policy "products are readable by everyone"
 on public.products
 for select
 using (true);
+
+drop policy if exists "users can read own favorite products" on public.favorite_products;
+create policy "users can read own favorite products"
+on public.favorite_products
+for select
+to authenticated
+using (auth.uid() = user_id);
+
+drop policy if exists "users can insert own favorite products" on public.favorite_products;
+create policy "users can insert own favorite products"
+on public.favorite_products
+for insert
+to authenticated
+with check (auth.uid() = user_id);
+
+drop policy if exists "users can delete own favorite products" on public.favorite_products;
+create policy "users can delete own favorite products"
+on public.favorite_products
+for delete
+to authenticated
+using (auth.uid() = user_id);
+
+drop policy if exists "users can read own followed shops" on public.followed_shops;
+create policy "users can read own followed shops"
+on public.followed_shops
+for select
+to authenticated
+using (auth.uid() = user_id);
+
+drop policy if exists "users can insert own followed shops" on public.followed_shops;
+create policy "users can insert own followed shops"
+on public.followed_shops
+for insert
+to authenticated
+with check (auth.uid() = user_id);
+
+drop policy if exists "users can delete own followed shops" on public.followed_shops;
+create policy "users can delete own followed shops"
+on public.followed_shops
+for delete
+to authenticated
+using (auth.uid() = user_id);
 
 drop policy if exists "shop owners can insert products" on public.products;
 create policy "shop owners can insert products"

@@ -17,6 +17,9 @@
 
 ## 4) Vérifier les tables
 - Dans `Table Editor`, vérifie la présence de:
+  - `profiles`
+  - `favorite_products`
+  - `followed_shops`
   - `shops`
   - `products`
   - `lead_events`
@@ -35,3 +38,13 @@
   - `title`, `subtitle`, `cta_label`
   - `target_url` ou `shop_id`
 - La home chargera automatiquement cette pub pour la ville courante.
+
+## 7) Regle vendeur (SIRET obligatoire)
+- Un vendeur ne peut pas acceder au dashboard / publier sans `siret_verified = true`.
+- Si tu mets a jour un projet existant, rejoue `supabase/schema.sql` pour ajouter:
+  - `profiles.siret_number`
+  - `profiles.siret_verified`
+  - `profiles.shop_address`
+  - `profiles.seller_attested`
+  - `profiles.seller_vacation_mode`
+  - `profiles.seller_deactivated`

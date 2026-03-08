@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "../src/styles/index.css";
+import { AppProviders } from "./providers";
 
 export const metadata: Metadata = {
   title: "MonCadeauLocal",
@@ -13,7 +14,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="fr">
-      <body>{children}</body>
+      <body>
+        <AppProviders>{children}</AppProviders>
+      </body>
     </html>
   );
 }

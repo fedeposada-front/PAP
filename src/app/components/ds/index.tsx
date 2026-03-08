@@ -237,6 +237,7 @@ export function ShopCard({
           <p className="truncate">{name}</p>
           <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-1" />
         </div>
+        <p className="text-xs text-muted-foreground truncate mt-0.5">{category}</p>
         <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
           <span className="flex items-center gap-0.5">
             <Star className="w-3 h-3 text-coral fill-coral" />
@@ -392,8 +393,19 @@ export function BottomSheet({
 }
 
 // ─── LOGO ──────────────────────────────────────────────
-export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" | "xl" }) {
-  const heights = { sm: 32, md: 40, lg: 64, xl: 128 };
+export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" | "xl" | "2xl" | "full" }) {
+  const heights = { sm: 32, md: 40, lg: 64, xl: 128, "2xl": 180 };
+
+  if (size === "full") {
+    return (
+      <img
+        src={logoHorizontalImg.src}
+        alt="MonCadeauLocal"
+        className="block w-full max-w-full object-contain"
+      />
+    );
+  }
+
   return (
     <img
       src={logoHorizontalImg.src}
