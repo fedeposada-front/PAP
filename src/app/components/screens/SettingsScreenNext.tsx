@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Header, Input, Badge } from "../ds";
 import { useAuth } from "../AuthContext";
+import { AddressAutocompleteInput, type AddressSuggestion } from "../AddressAutocompleteInput";
+import { fetchShopSettings, saveShopSettings } from "../../services/shopSettings";
 import {
   Building2,
   MapPin,
@@ -23,9 +25,11 @@ import {
   Mail,
   FileText,
   PartyPopper,
-  Copy,
   Coffee,
 } from "lucide-react";
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
 type SettingsTab = "shop" | "account" | "notifications";
 
@@ -61,9 +65,11 @@ const DEFAULT_SCHEDULE: Record<string, DaySchedule> = {
 export function SettingsScreenNext() {
   const router = useRouter();
   const push = (path: string) => router.push(path);
-  const { logout, user, updateSellerStatus } = useAuth();
+  const { logout, user, accessToken, updateSellerStatus, updateUser, updateProfile, updateEmail, updatePassword } = useAuth();
   const [activeTab, setActiveTab] = useState<SettingsTab>("shop");
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [bannerImage, setBannerImage] = useState<string | null>(null);
   const [logoImage, setLogoImage] = useState<string | null>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
@@ -71,7 +77,7 @@ export function SettingsScreenNext() {
 
   const [shopName, setShopName] = useState(user?.shopName ?? "");
   const [shopDesc, setShopDesc] = useState("");
-  const [shopAddress, setShopAddress] = useState("");
+  const [shopAddress, setShopAddress] = useState(user?.shopAddress ?? "");
   const [shopCity, setShopCity] = useState("");
   const [shopPostal, setShopPostal] = useState("");
   const [shopPhone, setShopPhone] = useState("");
@@ -79,9 +85,12 @@ export function SettingsScreenNext() {
   const [shopWebsite, setShopWebsite] = useState("");
   const [schedule, setSchedule] = useState<Record<string, DaySchedule>>(DEFAULT_SCHEDULE);
   const [openHolidays, setOpenHolidays] = useState(false);
-  const [shopSiret] = useState("");
+  const [shopSiret] = useState(user?.siretNumber ?? "");
   const [delivery, setDelivery] = useState(true);
   const [pickup, setPickup] = useState(true);
+  const [deliveryHand, setDeliveryHand] = useState(true);
+  const [deliveryPost, setDeliveryPost] = useState(false);
+  const [deliveryCarrier, setDeliveryCarrier] = useState(false);
   const [vacationMode, setVacationMode] = useState(Boolean(user?.sellerVacationMode));
   const [businessDeactivated, setBusinessDeactivated] = useState(Boolean(user?.sellerDeactivated));
 
@@ -90,6 +99,112 @@ export function SettingsScreenNext() {
   const [notifMessages, setNotifMessages] = useState(true);
   const [notifPromo, setNotifPromo] = useState(false);
   const [notifWeekly, setNotifWeekly] = useState(true);
+  const [accountMessage, setAccountMessage] = useState<string | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [isSavingAccount, setIsSavingAccount] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [editingEmail, setEditingEmail] = useState(false);
+  const [editingPassword, setEditingPassword] = useState(false);
+  const [accountFirstName, setAccountFirstName] = useState(user?.firstName ?? "");
+  const [accountLastName, setAccountLastName] = useState(user?.lastName ?? "");
+  const [accountEmail, setAccountEmail] = useState(user?.email ?? "");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [editingPayout, setEditingPayout] = useState(false);
+  const [isSavingPayout, setIsSavingPayout] = useState(false);
+  const [payoutIban, setPayoutIban] = useState("");
+  const [payoutBankName, setPayoutBankName] = useState("");
+  const [payoutAccountHolder, setPayoutAccountHolder] = useState("");
+  const [payoutActive, setPayoutActive] = useState(true);
+  const [payoutError, setPayoutError] = useState<string | null>(null);
+  const [payoutMessage, setPayoutMessage] = useState<string | null>(null);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  useEffect(() => {
+    if (!user?.id || !accessToken) return;
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const shop = await fetchShopSettings(user.id, accessToken);
+        if (!shop || cancelled) return;
+
+        setShopName(shop.name ?? "");
+        setShopDesc(shop.description ?? "");
+        setShopAddress(shop.address ?? "");
+        setShopPostal(shop.postal_code ?? "");
+        setShopCity(shop.city ?? "");
+        setShopPhone(shop.phone ?? "");
+        setShopEmail(shop.email ?? user.email ?? "");
+        setShopWebsite(shop.website ?? "");
+        setDelivery(Boolean(shop.delivery));
+        setPickup(Boolean(shop.pickup_today));
+        setDeliveryHand(Boolean(shop.delivery_hand ?? true));
+        setDeliveryPost(Boolean(shop.delivery_post ?? false));
+        setDeliveryCarrier(Boolean(shop.delivery_carrier ?? false));
+        setOpenHolidays(Boolean(shop.open_holidays));
+        if (shop.opening_hours && typeof shop.opening_hours === "object") {
+          setSchedule((prev) => ({ ...prev, ...(shop.opening_hours as Record<string, DaySchedule>) }));
+        }
+        if (shop.logo_image_url && !shop.logo_image_url.startsWith("blob:")) {
+          setLogoImage(shop.logo_image_url);
+        }
+        if (shop.banner_image_url && !shop.banner_image_url.startsWith("blob:")) {
+          setBannerImage(shop.banner_image_url);
+        }
+      } catch {
+        // keep defaults if fetch fails
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.email, accessToken]);
+
+  useEffect(() => {
+    setAccountFirstName(user?.firstName ?? "");
+    setAccountLastName(user?.lastName ?? "");
+    setAccountEmail(user?.email ?? "");
+  }, [user?.firstName, user?.lastName, user?.email]);
+
+  useEffect(() => {
+    if (!user?.id || !accessToken || !SUPABASE_URL || !SUPABASE_ANON_KEY) return;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const res = await fetch(
+          `${SUPABASE_URL}/rest/v1/profiles?id=eq.${user.id}&select=payout_iban,payout_bank_name,payout_account_holder,payout_active`,
+          {
+            headers: {
+              apikey: SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${accessToken}`,
+            },
+          }
+        );
+        if (!res.ok) return;
+        const rows = (await res.json()) as Array<{
+          payout_iban: string | null;
+          payout_bank_name: string | null;
+          payout_account_holder: string | null;
+          payout_active: boolean | null;
+        }>;
+        const row = rows[0];
+        if (!row || cancelled) return;
+        setPayoutIban(row.payout_iban ?? "");
+        setPayoutBankName(row.payout_bank_name ?? "");
+        setPayoutAccountHolder(row.payout_account_holder ?? "");
+        setPayoutActive(Boolean(row.payout_active ?? true));
+      } catch {
+        // no-op
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, accessToken]);
 
   const handleImageUpload = (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -97,18 +212,217 @@ export function SettingsScreenNext() {
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const url = URL.createObjectURL(file);
-    setter(url);
+    if (!file.type.startsWith("image/")) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setter(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSave = () => {
     const run = async () => {
+      setSaved(false);
+      if (!user?.id || !accessToken) {
+        setSaveError("Session invalide. Merci de vous reconnecter.");
+        return;
+      }
+
+      const errors: string[] = [];
+      if (shopName.trim().length < 2) errors.push("Nom de boutique requis (min 2 caracteres).");
+      if (shopAddress.trim().length < 6) errors.push("Adresse invalide.");
+      if (!/^[0-9]{5}$/.test(shopPostal.trim())) errors.push("Code postal invalide (5 chiffres).");
+      if (shopCity.trim().length < 2) errors.push("Ville invalide.");
+      if (shopPhone.trim() && !/^[0-9+() .-]{8,20}$/.test(shopPhone.trim())) errors.push("Telephone invalide.");
+      if (shopEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(shopEmail.trim())) errors.push("E-mail invalide.");
+      if (shopWebsite.trim() && !/^https?:\/\//i.test(shopWebsite.trim())) errors.push("Site web: utilisez une URL http(s).");
+      if (delivery && !deliveryHand && !deliveryPost && !deliveryCarrier) {
+        errors.push("Selectionnez au moins un mode de livraison.");
+      }
+      if (!pickup && !delivery) {
+        errors.push("Activez au moins Retrait ou Livraison.");
+      }
+      if (errors.length > 0) {
+        setSaveError(errors.join(" "));
+        return;
+      }
+
+      setSaveError(null);
+      setIsSaving(true);
       await updateSellerStatus({
         vacationMode,
         deactivated: businessDeactivated,
       });
+      const persistedShop = await saveShopSettings({
+        userId: user.id,
+        accessToken,
+        shopName: shopName.trim(),
+        shopDesc: shopDesc.trim(),
+        shopAddress: shopAddress.trim(),
+        shopCity: shopCity.trim(),
+        shopPostal: shopPostal.trim(),
+        shopPhone: shopPhone.trim(),
+        shopEmail: shopEmail.trim(),
+        shopWebsite: shopWebsite.trim(),
+        schedule,
+        openHolidays,
+        pickup,
+        delivery,
+        deliveryHand,
+        deliveryPost,
+        deliveryCarrier,
+        logoImage: logoImage ?? null,
+        bannerImage: bannerImage ?? null,
+      });
+      setShopName(persistedShop.name ?? "");
+      setShopDesc(persistedShop.description ?? "");
+      setShopAddress(persistedShop.address ?? "");
+      setShopPostal(persistedShop.postal_code ?? "");
+      setShopCity(persistedShop.city ?? "");
+      setShopPhone(persistedShop.phone ?? "");
+      setShopEmail(persistedShop.email ?? "");
+      setShopWebsite(persistedShop.website ?? "");
+      setDelivery(Boolean(persistedShop.delivery));
+      setPickup(Boolean(persistedShop.pickup_today));
+      setDeliveryHand(Boolean(persistedShop.delivery_hand ?? true));
+      setDeliveryPost(Boolean(persistedShop.delivery_post ?? false));
+      setDeliveryCarrier(Boolean(persistedShop.delivery_carrier ?? false));
+      setOpenHolidays(Boolean(persistedShop.open_holidays ?? false));
+      if (persistedShop.logo_image_url && !persistedShop.logo_image_url.startsWith("blob:")) {
+        setLogoImage(persistedShop.logo_image_url);
+      }
+      if (persistedShop.banner_image_url && !persistedShop.banner_image_url.startsWith("blob:")) {
+        setBannerImage(persistedShop.banner_image_url);
+      }
+      updateUser({
+        shopName: persistedShop.name ?? shopName.trim(),
+        shopAddress: persistedShop.address ?? shopAddress.trim(),
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      setIsSaving(false);
+    };
+    void run().catch((error) => {
+      const message = error instanceof Error ? error.message : "Impossible d'enregistrer les modifications.";
+      setSaveError(message);
+      setIsSaving(false);
+    });
+  };
+
+  const normalizedIban = (value: string) => value.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const ibanLengths: Record<string, number> = {
+    FR: 27,
+    DE: 22,
+    ES: 24,
+    IT: 27,
+    BE: 16,
+    NL: 18,
+    LU: 20,
+    PT: 25,
+    IE: 22,
+    GB: 22,
+    CH: 21,
+  };
+  const isValidIban = (value: string) => {
+    const iban = normalizedIban(value);
+    if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]+$/.test(iban)) return false;
+    const country = iban.slice(0, 2);
+    const expectedLength = ibanLengths[country];
+    if (expectedLength && iban.length !== expectedLength) return false;
+    if (!expectedLength && (iban.length < 15 || iban.length > 34)) return false;
+
+    const rearranged = `${iban.slice(4)}${iban.slice(0, 4)}`;
+    const numeric = rearranged.replace(/[A-Z]/g, (char) => String(char.charCodeAt(0) - 55));
+
+    let remainder = 0;
+    for (let i = 0; i < numeric.length; i += 7) {
+      const block = `${remainder}${numeric.slice(i, i + 7)}`;
+      remainder = Number(block) % 97;
+    }
+    return remainder === 1;
+  };
+  const maskIban = (value: string) => {
+    const clean = normalizedIban(value);
+    if (!clean) return "";
+    if (clean.length <= 8) return clean;
+    return `${clean.slice(0, 4)} •••• •••• •••• ${clean.slice(-4)}`;
+  };
+
+  const savePayout = () => {
+    const run = async () => {
+      setAccountError(null);
+      setAccountMessage(null);
+      setPayoutError(null);
+      setPayoutMessage(null);
+      if (!user?.id || !accessToken || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
+        setPayoutError("Session invalide. Reconnectez-vous.");
+        return;
+      }
+      if (!payoutIban.trim() || !isValidIban(payoutIban)) {
+        setPayoutError("IBAN invalide ou incomplet.");
+        return;
+      }
+      if (!payoutAccountHolder.trim()) {
+        setPayoutError("Titulaire du compte requis.");
+        return;
+      }
+      if (payoutBankName.trim().length > 0 && payoutBankName.trim().length < 2) {
+        setPayoutError("Nom de banque invalide.");
+        return;
+      }
+
+      setIsSavingPayout(true);
+      try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/profiles?on_conflict=id`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${accessToken}`,
+            Prefer: "resolution=merge-duplicates,return=representation",
+          },
+          body: JSON.stringify([
+            {
+              id: user.id,
+              payout_iban: normalizedIban(payoutIban),
+              payout_bank_name: payoutBankName.trim() || null,
+              payout_account_holder: payoutAccountHolder.trim(),
+              payout_active: payoutActive,
+            },
+          ]),
+        });
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => null);
+          throw new Error(
+            (errorData && (errorData.message || errorData.error_description || errorData.msg)) ||
+              "Impossible de sauvegarder le moyen de versement."
+          );
+        }
+        setEditingPayout(false);
+        setPayoutMessage("Moyen de versement mis à jour.");
+      } catch (error) {
+        setPayoutError(
+          error instanceof Error ? error.message : "Impossible de sauvegarder le moyen de versement."
+        );
+      } finally {
+        setIsSavingPayout(false);
+      }
+    };
+    void run();
+  };
+
+  const handleLogout = () => {
+    const run = async () => {
+      setIsLoggingOut(true);
+      try {
+        await logout();
+      } finally {
+        push("/auth");
+        setIsLoggingOut(false);
+      }
     };
     void run();
   };
@@ -118,6 +432,88 @@ export function SettingsScreenNext() {
     { key: "account", label: "Compte" },
     { key: "notifications", label: "Notifs" },
   ];
+
+  const saveName = () => {
+    const run = async () => {
+      setAccountError(null);
+      setAccountMessage(null);
+      if (!accountFirstName.trim() || !accountLastName.trim()) {
+        setAccountError("Prénom et nom sont requis.");
+        return;
+      }
+      setIsSavingAccount(true);
+      try {
+        await updateProfile({
+          firstName: accountFirstName.trim(),
+          lastName: accountLastName.trim(),
+        });
+        setEditingName(false);
+        setAccountFirstName(accountFirstName.trim());
+        setAccountLastName(accountLastName.trim());
+        setAccountMessage("Nom mis à jour.");
+      } catch (error) {
+        setAccountError(error instanceof Error ? error.message : "Impossible de mettre à jour le nom.");
+      } finally {
+        setIsSavingAccount(false);
+      }
+    };
+    void run();
+  };
+
+  const saveEmail = () => {
+    const run = async () => {
+      setAccountError(null);
+      setAccountMessage(null);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(accountEmail.trim())) {
+        setAccountError("E-mail invalide.");
+        return;
+      }
+      setIsSavingAccount(true);
+      try {
+        await updateEmail(accountEmail.trim());
+        setEditingEmail(false);
+        setAccountEmail(accountEmail.trim());
+        setAccountMessage("E-mail mis à jour.");
+      } catch (error) {
+        setAccountError(error instanceof Error ? error.message : "Impossible de mettre à jour l'e-mail.");
+      } finally {
+        setIsSavingAccount(false);
+      }
+    };
+    void run();
+  };
+
+  const savePassword = () => {
+    const run = async () => {
+      setAccountError(null);
+      setAccountMessage(null);
+      if (!newPassword.trim() || !confirmPassword.trim()) {
+        setAccountError("Renseignez les deux champs mot de passe.");
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setAccountError("Les mots de passe ne correspondent pas.");
+        return;
+      }
+      if (newPassword.length < 8) {
+        setAccountError("Le mot de passe doit contenir au moins 8 caractères.");
+        return;
+      }
+      setIsSavingAccount(true);
+      try {
+        await updatePassword(newPassword);
+        setEditingPassword(false);
+        setNewPassword("");
+        setConfirmPassword("");
+        setAccountMessage("Mot de passe mis à jour.");
+      } catch (error) {
+        setAccountError(error instanceof Error ? error.message : "Impossible de mettre à jour le mot de passe.");
+      } finally {
+        setIsSavingAccount(false);
+      }
+    };
+    void run();
+  };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -254,7 +650,7 @@ export function SettingsScreenNext() {
                     <div className="bg-muted/50 rounded-xl px-4 py-3 text-sm text-muted-foreground flex items-center justify-between">
                       <span className="flex items-center gap-2">
                         <FileText className="w-4 h-4" />
-                        {shopSiret}
+                        {shopSiret || "Non renseigné"}
                       </span>
                       <Badge variant="success">Vérifié</Badge>
                     </div>
@@ -273,7 +669,14 @@ export function SettingsScreenNext() {
                     <label className="text-xs text-muted-foreground mb-1 block">
                       Rue
                     </label>
-                    <Input value={shopAddress} onChange={setShopAddress} />
+                    <AddressAutocompleteInput
+                      value={shopAddress}
+                      onChange={setShopAddress}
+                      onSelectSuggestion={(suggestion: AddressSuggestion) => {
+                        if (suggestion.postcode) setShopPostal(suggestion.postcode);
+                        if (suggestion.city) setShopCity(suggestion.city);
+                      }}
+                    />
                   </div>
                   <div className="flex gap-3">
                     <div className="flex-1">
@@ -334,30 +737,10 @@ export function SettingsScreenNext() {
 
               {/* Hours */}
               <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-green" />
-                    Horaires d'ouverture
-                  </h4>
-                  <button
-                    onClick={() => {
-                      const first = DAYS_LABELS.find((d) => schedule[d.key].open);
-                      if (!first) return;
-                      const ref = schedule[first.key];
-                      const updated = { ...schedule };
-                      DAYS_LABELS.forEach((d) => {
-                        if (updated[d.key].open) {
-                          updated[d.key] = { ...updated[d.key], openTime: ref.openTime, closeTime: ref.closeTime };
-                        }
-                      });
-                      setSchedule(updated);
-                    }}
-                    className="text-xs text-green flex items-center gap-1 hover:underline"
-                  >
-                    <Copy className="w-3 h-3" />
-                    Appliquer à tous
-                  </button>
-                </div>
+                <h4 className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-green" />
+                  Horaires d'ouverture
+                </h4>
 
                 <div className="space-y-1">
                   {DAYS_LABELS.map((day) => {
@@ -584,6 +967,29 @@ export function SettingsScreenNext() {
                   checked={pickup}
                   onChange={setPickup}
                 />
+                {delivery && (
+                  <div className="rounded-xl bg-muted/30 p-3 space-y-2">
+                    <p className="text-xs text-muted-foreground">Modes de livraison</p>
+                    <ToggleRow
+                      icon={<MapPin className="w-4 h-4" />}
+                      label="Livraison en main propre (courte distance)"
+                      checked={deliveryHand}
+                      onChange={setDeliveryHand}
+                    />
+                    <ToggleRow
+                      icon={<Truck className="w-4 h-4" />}
+                      label="Livraison via La Poste"
+                      checked={deliveryPost}
+                      onChange={setDeliveryPost}
+                    />
+                    <ToggleRow
+                      icon={<Truck className="w-4 h-4" />}
+                      label="Livraison via transporteur"
+                      checked={deliveryCarrier}
+                      onChange={setDeliveryCarrier}
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Save */}
@@ -593,9 +999,13 @@ export function SettingsScreenNext() {
                 variant="accent"
                 icon={<Save className="w-4 h-4" />}
                 onClick={handleSave}
+                disabled={isSaving}
               >
-                {saved ? "Enregistré !" : "Enregistrer les modifications"}
+                {saved ? "Enregistré !" : isSaving ? "Enregistrement..." : "Enregistrer les modifications"}
               </Button>
+              {saveError && (
+                <p className="text-sm text-destructive text-center">{saveError}</p>
+              )}
             </>
           )}
 
@@ -611,39 +1021,114 @@ export function SettingsScreenNext() {
                   <div className="flex items-center justify-between py-2">
                     <div>
                       <p className="text-sm">Nom complet</p>
-                      <p className="text-xs text-muted-foreground">
-                        Bernard Dupont
-                      </p>
+                      {!editingName ? (
+                        <p className="text-xs text-muted-foreground">
+                          {`${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim() || "Non renseigné"}
+                        </p>
+                      ) : (
+                        <div className="mt-2 flex gap-2">
+                          <Input value={accountFirstName} onChange={setAccountFirstName} placeholder="Prénom" />
+                          <Input value={accountLastName} onChange={setAccountLastName} placeholder="Nom" />
+                        </div>
+                      )}
                     </div>
-                    <button className="text-sm text-coral flex items-center gap-1">
-                      Modifier <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
+                    {!editingName ? (
+                      <button onClick={() => setEditingName(true)} className="text-sm text-coral flex items-center gap-1">
+                        Modifier <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setAccountFirstName(user?.firstName ?? "");
+                            setAccountLastName(user?.lastName ?? "");
+                            setEditingName(false);
+                            setAccountError(null);
+                          }}
+                        >
+                          Annuler
+                        </Button>
+                        <Button size="sm" variant="accent" onClick={saveName} disabled={isSavingAccount}>OK</Button>
+                      </div>
+                    )}
                   </div>
                   <div className="h-px bg-border" />
                   <div className="flex items-center justify-between py-2">
                     <div>
                       <p className="text-sm">Adresse e-mail</p>
-                      <p className="text-xs text-muted-foreground">
-                        bernard@maison-dupont.fr
-                      </p>
+                      {!editingEmail ? (
+                        <p className="text-xs text-muted-foreground">
+                          {user?.email || "Non renseigné"}
+                        </p>
+                      ) : (
+                        <div className="mt-2">
+                          <Input value={accountEmail} onChange={setAccountEmail} placeholder="E-mail" icon={<Mail className="w-4 h-4" />} />
+                        </div>
+                      )}
                     </div>
-                    <button className="text-sm text-coral flex items-center gap-1">
-                      Modifier <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
+                    {!editingEmail ? (
+                      <button onClick={() => setEditingEmail(true)} className="text-sm text-coral flex items-center gap-1">
+                        Modifier <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setAccountEmail(user?.email ?? "");
+                            setEditingEmail(false);
+                            setAccountError(null);
+                          }}
+                        >
+                          Annuler
+                        </Button>
+                        <Button size="sm" variant="accent" onClick={saveEmail} disabled={isSavingAccount}>OK</Button>
+                      </div>
+                    )}
                   </div>
                   <div className="h-px bg-border" />
                   <div className="flex items-center justify-between py-2">
                     <div>
                       <p className="text-sm">Mot de passe</p>
-                      <p className="text-xs text-muted-foreground">
-                        Dernière modification il y a 3 mois
-                      </p>
+                      {!editingPassword ? (
+                        <p className="text-xs text-muted-foreground">
+                          ********
+                        </p>
+                      ) : (
+                        <div className="mt-2 space-y-2">
+                          <Input value={newPassword} onChange={setNewPassword} placeholder="Nouveau mot de passe" type="password" />
+                          <Input value={confirmPassword} onChange={setConfirmPassword} placeholder="Confirmer le mot de passe" type="password" />
+                        </div>
+                      )}
                     </div>
-                    <button className="text-sm text-coral flex items-center gap-1">
-                      Modifier <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
+                    {!editingPassword ? (
+                      <button onClick={() => setEditingPassword(true)} className="text-sm text-coral flex items-center gap-1">
+                        Modifier <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setEditingPassword(false);
+                            setNewPassword("");
+                            setConfirmPassword("");
+                            setAccountError(null);
+                          }}
+                        >
+                          Annuler
+                        </Button>
+                        <Button size="sm" variant="accent" onClick={savePassword} disabled={isSavingAccount}>OK</Button>
+                      </div>
+                    )}
                   </div>
                 </div>
+                {accountMessage && <p className="text-sm text-green">{accountMessage}</p>}
+                {accountError && <p className="text-sm text-destructive">{accountError}</p>}
               </div>
 
               {/* Payment */}
@@ -652,34 +1137,82 @@ export function SettingsScreenNext() {
                   <CreditCard className="w-4 h-4 text-green" />
                   Moyen de versement
                 </h4>
-                <div className="bg-muted rounded-xl p-3 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-7 bg-blue-100 rounded flex items-center justify-center text-xs">
-                      IBAN
+                {!editingPayout ? (
+                  <div className="space-y-3">
+                    {payoutIban ? (
+                      <div className="bg-muted rounded-xl p-3 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm">{maskIban(payoutIban)}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {payoutBankName || "Banque non renseignée"}{payoutAccountHolder ? ` · ${payoutAccountHolder}` : ""}
+                          </p>
+                        </div>
+                        <Badge variant={payoutActive ? "success" : "warning"}>
+                          {payoutActive ? "Actif" : "Inactif"}
+                        </Badge>
+                      </div>
+                    ) : (
+                      <div className="bg-muted rounded-xl p-3">
+                        <p className="text-sm">Aucun moyen de versement configuré.</p>
+                      </div>
+                    )}
+                    <Button size="sm" variant="outline" onClick={() => setEditingPayout(true)}>
+                      {payoutIban ? "Modifier le RIB" : "Configurer le RIB"}
+                    </Button>
+                    {payoutMessage && <p className="text-sm text-green">{payoutMessage}</p>}
+                    {payoutError && <p className="text-sm text-destructive">{payoutError}</p>}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">IBAN</label>
+                      <Input value={payoutIban} onChange={setPayoutIban} placeholder="FR76..." />
                     </div>
                     <div>
-                      <p className="text-sm">FR76 •••• •••• •••• 4521</p>
-                      <p className="text-xs text-muted-foreground">
-                        Crédit Agricole
-                      </p>
+                      <label className="text-xs text-muted-foreground mb-1 block">Banque</label>
+                      <Input value={payoutBankName} onChange={setPayoutBankName} placeholder="Nom de la banque" />
                     </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Titulaire du compte</label>
+                      <Input value={payoutAccountHolder} onChange={setPayoutAccountHolder} placeholder="Nom complet / Raison sociale" />
+                    </div>
+                    <ToggleRow
+                      icon={<CreditCard className="w-4 h-4" />}
+                      label="Moyen de versement actif"
+                      checked={payoutActive}
+                      onChange={setPayoutActive}
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setEditingPayout(false);
+                          setPayoutError(null);
+                        }}
+                      >
+                        Annuler
+                      </Button>
+                      <Button size="sm" variant="accent" onClick={savePayout} disabled={isSavingPayout}>
+                        {isSavingPayout ? "Enregistrement..." : "Enregistrer"}
+                      </Button>
+                    </div>
+                    {payoutMessage && <p className="text-sm text-green">{payoutMessage}</p>}
+                    {payoutError && <p className="text-sm text-destructive">{payoutError}</p>}
                   </div>
-                  <Badge variant="success">Actif</Badge>
-                </div>
-                <button className="text-sm text-coral flex items-center gap-1">
-                  Modifier le RIB <ChevronRight className="w-3.5 h-3.5" />
-                </button>
+                )}
               </div>
 
               {/* Danger zone */}
               <div className="bg-white rounded-2xl border border-red-200 shadow-sm p-4 space-y-3">
                 <h4 className="text-red-500">Zone sensible</h4>
                 <button
-                  onClick={() => logout()}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-red-50 transition-colors text-red-500"
+                  onClick={handleLogout}
+                  disabled={isLoggingOut}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-red-50 transition-colors text-red-500 disabled:opacity-60"
                 >
                   <LogOut className="w-4 h-4" />
-                  <span className="text-sm">Se déconnecter</span>
+                  <span className="text-sm">{isLoggingOut ? "Déconnexion..." : "Se déconnecter"}</span>
                 </button>
               </div>
             </>

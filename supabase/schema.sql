@@ -26,6 +26,10 @@ create table if not exists public.profiles (
   seller_attested boolean not null default false,
   seller_vacation_mode boolean not null default false,
   seller_deactivated boolean not null default false,
+  payout_iban text,
+  payout_bank_name text,
+  payout_account_holder text,
+  payout_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint profiles_roles_not_empty check (array_length(roles, 1) >= 1),
@@ -41,6 +45,10 @@ alter table public.profiles add column if not exists shop_address text;
 alter table public.profiles add column if not exists seller_attested boolean not null default false;
 alter table public.profiles add column if not exists seller_vacation_mode boolean not null default false;
 alter table public.profiles add column if not exists seller_deactivated boolean not null default false;
+alter table public.profiles add column if not exists payout_iban text;
+alter table public.profiles add column if not exists payout_bank_name text;
+alter table public.profiles add column if not exists payout_account_holder text;
+alter table public.profiles add column if not exists payout_active boolean not null default true;
 do $$
 begin
   if not exists (
@@ -50,6 +58,26 @@ begin
     alter table public.profiles
       add constraint profiles_siret_format
       check (siret_number is null or siret_number ~ '^[0-9]{14}$');
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'profiles_payout_iban_format'
+  ) then
+    alter table public.profiles
+      add constraint profiles_payout_iban_format
+      check (
+        payout_iban is null
+        or (
+          payout_iban ~ '^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$'
+          and char_length(payout_iban) between 15 and 34
+          and (left(payout_iban, 2) <> 'FR' or char_length(payout_iban) = 27)
+        )
+      );
   end if;
 end
 $$;

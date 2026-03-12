@@ -40,8 +40,9 @@ function AppleIcon({ className = "w-5 h-5" }: { className?: string }) {
 export function AuthScreenNext() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const push = useCallback((path: string) => router.push(path), [router]);
   const replace = useCallback((path: string) => router.replace(path), [router]);
-  const { signIn, signInWithGoogle, signUp, isAuthenticated, isLoading, user, switchRole } = useAuth();
+  const { signIn, signInWithGoogle, signUp, isAuthenticated, isLoading, user, logout, switchRole, updateProfile } = useAuth();
   const [role, setRole] = useState<"buyer" | "seller" | null>(null);
   const [mode, setMode] = useState<"login" | "signup">("signup");
   const [showPassword, setShowPassword] = useState(false);
@@ -52,6 +53,10 @@ export function AuthScreenNext() {
   const [shopName, setShopName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [profileFirstName, setProfileFirstName] = useState("");
+  const [profileLastName, setProfileLastName] = useState("");
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileMessage, setProfileMessage] = useState<string | null>(null);
 
   // Pre-select role from URL params (e.g. /auth?role=seller)
   useEffect(() => {
@@ -68,10 +73,6 @@ export function AuthScreenNext() {
 
     const run = async () => {
       if (requestedRole === "seller" && user.roles.includes("seller")) {
-        if (!user.siretVerified) {
-          replace("/siret");
-          return;
-        }
         if (user.role !== "seller") {
           await switchRole("seller");
         }
@@ -101,11 +102,131 @@ export function AuthScreenNext() {
     if (requestedRole === "seller" || requestedRole === "buyer") return;
 
     if (user.role === "seller") {
-      replace(user.siretVerified ? "/dashboard" : "/siret");
-      return;
+      replace("/dashboard");
     }
-    replace("/home");
   }, [isAuthenticated, user, searchParams, replace]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    setProfileFirstName(user.firstName ?? "");
+    setProfileLastName(user.lastName ?? "");
+    setProfileMessage(null);
+  }, [isAuthenticated, user]);
+
+  // If user is already logged in, show profile
+  if (isAuthenticated && user) {
+    // Seller is being redirected to dashboard
+    if (user.role === "seller") return null;
+
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <Header title="Mon profil" onBack={() => router.back()} />
+        <div className="flex-1 flex flex-col items-center px-6 py-8 max-w-md mx-auto w-full">
+          <div className="w-20 h-20 bg-coral-light rounded-full flex items-center justify-center mb-4">
+            <span className="text-2xl">
+              {user.firstName[0]}{user.lastName[0]}
+            </span>
+          </div>
+          <h2 className="mb-1">{user.firstName} {user.lastName}</h2>
+          <p className="text-sm text-muted-foreground mb-1">{user.email}</p>
+          <p className="text-xs text-muted-foreground mb-8">Compte acheteur</p>
+
+          <div className="w-full space-y-3 mb-6">
+            <Input
+              placeholder="Prénom"
+              value={profileFirstName}
+              onChange={(value) => {
+                setProfileFirstName(value);
+                setProfileMessage(null);
+              }}
+            />
+            <Input
+              placeholder="Nom"
+              value={profileLastName}
+              onChange={(value) => {
+                setProfileLastName(value);
+                setProfileMessage(null);
+              }}
+            />
+            {profileMessage && (
+              <p className={`text-sm ${profileMessage.includes("Erreur") ? "text-destructive" : "text-green"}`}>
+                {profileMessage}
+              </p>
+            )}
+            <Button
+              fullWidth
+              onClick={() => {
+                const run = async () => {
+                  const nextFirstName = profileFirstName.trim();
+                  const nextLastName = profileLastName.trim();
+                  if (!nextFirstName || !nextLastName) {
+                    setProfileMessage("Erreur: prénom et nom sont requis.");
+                    return;
+                  }
+                  setIsSavingProfile(true);
+                  setProfileMessage(null);
+                  try {
+                    await updateProfile({
+                      firstName: nextFirstName,
+                      lastName: nextLastName,
+                    });
+                    setProfileMessage("Profil mis à jour.");
+                  } catch (error) {
+                    const message =
+                      error instanceof Error ? error.message : "Impossible de mettre à jour le profil.";
+                    setProfileMessage(`Erreur: ${message}`);
+                  } finally {
+                    setIsSavingProfile(false);
+                  }
+                };
+                void run();
+              }}
+              disabled={isSavingProfile}
+            >
+              {isSavingProfile ? "Enregistrement..." : "Enregistrer le profil"}
+            </Button>
+          </div>
+
+          <div className="w-full space-y-3">
+            <Button
+              fullWidth
+              variant="outline"
+              onClick={() => push("/home")}
+            >
+              Explorer les boutiques
+            </Button>
+            <Button
+              fullWidth
+              variant="outline"
+              onClick={() => push("/cart")}
+            >
+              Mon panier
+            </Button>
+            <Button
+              fullWidth
+              variant="outline"
+              onClick={() => push("/messages")}
+            >
+              Mes messages
+            </Button>
+            <div className="pt-4">
+              <Button
+                fullWidth
+                variant="ghost"
+                className="text-destructive"
+                onClick={async () => {
+                  await logout();
+                  setRole(null);
+                }}
+              >
+                Se déconnecter
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!role) {
     return (
@@ -120,10 +241,8 @@ export function AuthScreenNext() {
           </button>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center px-6 max-w-md mx-auto w-full">
-          <div className="w-[78%] sm:w-full">
-            <Logo size="full" />
-          </div>
-          <h2 className="mt-3 mb-2 text-center">Bienvenue !</h2>
+          <Logo size="2xl" />
+          <h2 className="mt-6 mb-2 text-center">Bienvenue !</h2>
           <p className="text-muted-foreground text-center text-sm mb-8">
             Comment souhaitez-vous utiliser Mon cadeau local ?
           </p>
@@ -188,9 +307,9 @@ export function AuthScreenNext() {
         }
 
         if (role === "seller") {
-          replace("/siret");
+          push("/siret");
         } else {
-          replace("/home");
+          push("/home");
         }
       } catch (error) {
         const message =

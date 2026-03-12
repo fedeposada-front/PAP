@@ -62,6 +62,9 @@ interface AuthContextType {
   }) => Promise<void>;
   updateSellerStatus: (data: { vacationMode: boolean; deactivated: boolean }) => Promise<void>;
   updateProfile: (data: { firstName: string; lastName: string }) => Promise<void>;
+  updateEmail: (email: string) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (data: Partial<User>) => void;
 }
@@ -78,6 +81,9 @@ const AuthContext = createContext<AuthContextType>({
   verifySiret: async () => {},
   updateSellerStatus: async () => {},
   updateProfile: async () => {},
+  updateEmail: async () => {},
+  requestPasswordReset: async () => {},
+  updatePassword: async () => {},
   logout: async () => {},
   updateUser: () => {},
 });
@@ -556,6 +562,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
+  const updateEmail: AuthContextType["updateEmail"] = async (email) => {
+    if (!email.trim()) {
+      throw new Error("E-mail requis.");
+    }
+
+    await withSessionRetry((accessToken) =>
+      requestJson(
+        `${SUPABASE_URL}/auth/v1/user`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            email: email.trim(),
+          }),
+        },
+        { requiresAuth: true, accessToken }
+      )
+    );
+
+    setUser((prev) => (prev ? { ...prev, email: email.trim() } : prev));
+  };
+
   const logout: AuthContextType["logout"] = async () => {
     if (session?.access_token) {
       try {
@@ -570,6 +597,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setUser(null);
     setActiveSession(null);
+  };
+
+  const requestPasswordReset: AuthContextType["requestPasswordReset"] = async (email) => {
+    if (!hasSupabaseConfig()) {
+      throw new Error("Configuration Supabase manquante.");
+    }
+    if (typeof window === "undefined") return;
+
+    const redirectTo = `${window.location.origin}/reset-password`;
+
+    await requestJson(
+      `${SUPABASE_URL}/auth/v1/recover`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          email: email.trim(),
+          redirect_to: redirectTo,
+        }),
+      }
+    );
+  };
+
+  const updatePassword: AuthContextType["updatePassword"] = async (newPassword) => {
+    if (!newPassword.trim()) {
+      throw new Error("Mot de passe requis.");
+    }
+
+    await withSessionRetry((accessToken) =>
+      requestJson(
+        `${SUPABASE_URL}/auth/v1/user`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            password: newPassword,
+          }),
+        },
+        { requiresAuth: true, accessToken }
+      )
+    );
+
+    if (session?.access_token) {
+      try {
+        await fetchCurrentUser(session.access_token);
+      } catch {
+        // Ignore profile refresh issues; password is already updated.
+      }
+    }
   };
 
   useEffect(() => {
@@ -639,6 +713,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     verifySiret,
     updateSellerStatus,
     updateProfile,
+    updateEmail,
+    requestPasswordReset,
+    updatePassword,
     logout,
     updateUser,
   };

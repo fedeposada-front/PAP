@@ -1,5 +1,3 @@
-import { IMAGES } from "../data/mock-data";
-
 export type AdPlacement = string;
 
 export interface SponsoredAd {
@@ -30,21 +28,6 @@ interface AdApiRow {
   ends_at: string | null;
   is_active: boolean;
 }
-
-const FALLBACK_ADS: SponsoredAd[] = [
-  {
-    id: "fallback-ad-atelier-claire",
-    title: "Atelier de Claire",
-    subtitle: "Coffrets bijoux et pieces artisanales a offrir cette semaine",
-    imageUrl: IMAGES.jewelry,
-    ctaLabel: "Voir l'offre",
-    targetUrl: "/shop/s2",
-    placement: "home_sidebar",
-    city: "Amiens",
-    shopId: "s2",
-    priority: 10,
-  },
-];
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -129,10 +112,7 @@ export async function fetchSponsoredAd(
   placement: AdPlacement
 ): Promise<SponsoredAd | null> {
   if (!hasSupabaseConfig()) {
-    return (
-      FALLBACK_ADS.find((ad) => ad.placement === placement && matchesCity(ad.city, city)) ??
-      null
-    );
+    return null;
   }
 
   try {
@@ -150,12 +130,9 @@ export async function fetchSponsoredAd(
 
     const ad = preferredRow ? normalizeAd(preferredRow) : null;
 
-    return ad ?? null;
+    return ad;
   } catch {
-    return (
-      FALLBACK_ADS.find((ad) => ad.placement === placement && matchesCity(ad.city, city)) ??
-      null
-    );
+    return null;
   }
 }
 

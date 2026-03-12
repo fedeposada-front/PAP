@@ -9,6 +9,11 @@
 - Colle le contenu de `supabase/schema.sql`.
 - Exécute le script.
 
+## 2.1) Appliquer les migrations
+- Toujours après le schéma de base, exécute aussi les fichiers SQL dans `supabase/migrations/` (du plus ancien au plus récent).
+- Pour les derniers écrans vendeur (settings + produits), exécute:
+  - `supabase/migrations/20260309_shop_settings_and_product_media.sql`
+
 ## 3) Configurer le frontend
 - Copie `.env.example` en `.env.local`.
 - Renseigne:

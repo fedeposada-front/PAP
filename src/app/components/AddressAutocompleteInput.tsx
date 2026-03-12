@@ -7,19 +7,29 @@ import { MapPin } from "lucide-react";
 interface AddressFeature {
   properties?: {
     label?: string;
+    postcode?: string;
+    city?: string;
   };
+}
+
+export interface AddressSuggestion {
+  label: string;
+  postcode?: string;
+  city?: string;
 }
 
 export function AddressAutocompleteInput({
   value,
   onChange,
   placeholder,
+  onSelectSuggestion,
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  onSelectSuggestion?: (suggestion: AddressSuggestion) => void;
 }) {
-  const [results, setResults] = useState<string[]>([]);
+  const [results, setResults] = useState<AddressSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
@@ -43,10 +53,14 @@ export function AddressAutocompleteInput({
           if (!response.ok) throw new Error("Adresse indisponible");
           const payload = (await response.json()) as { features?: AddressFeature[] };
           if (cancelled) return;
-          const labels = (payload.features ?? [])
-            .map((feature) => feature.properties?.label ?? "")
-            .filter((label) => Boolean(label));
-          setResults(labels);
+          const suggestions = (payload.features ?? [])
+            .map((feature) => ({
+              label: feature.properties?.label ?? "",
+              postcode: feature.properties?.postcode,
+              city: feature.properties?.city,
+            }))
+            .filter((item) => Boolean(item.label));
+          setResults(suggestions);
         } catch {
           if (!cancelled) setResults([]);
         } finally {
@@ -81,17 +95,18 @@ export function AddressAutocompleteInput({
 
       {showResults && results.length > 0 && (
         <div className="absolute z-20 mt-1 w-full bg-white border border-border rounded-xl shadow-sm overflow-hidden">
-          {results.map((label) => (
+          {results.map((result) => (
             <button
-              key={label}
+              key={result.label}
               type="button"
               onClick={() => {
-                onChange(label);
+                onChange(result.label);
+                onSelectSuggestion?.(result);
                 setShowResults(false);
               }}
               className="w-full text-left px-3 py-2 text-sm hover:bg-muted"
             >
-              {label}
+              {result.label}
             </button>
           ))}
         </div>

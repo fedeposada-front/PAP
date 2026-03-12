@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   Heart,
@@ -15,10 +15,11 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { Button, Badge, Header, BottomNav, Logo } from "../ds";
-import { PRODUCTS, SHOPS } from "../../data/mock-data";
 import { useCart } from "../CartContext";
 import { useAuth } from "../AuthContext";
 import { trackLeadEvent } from "../../services/leadEvents";
+import { fetchProducts, fetchShops } from "../../services/catalog";
+import type { Product, Shop } from "../../types/catalog";
 
 export function ProductScreenNext() {
   const params = useParams<{ id: string }>();
@@ -27,10 +28,34 @@ export function ProductScreenNext() {
   const push = (path: string) => router.push(path);
   const { addItem, items } = useCart();
   const { user, isAuthenticated } = useAuth();
-  const product = PRODUCTS.find((p) => p.id === id) || PRODUCTS[0];
-  const shop = SHOPS.find((s) => s.id === product.shopId);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [shop, setShop] = useState<Shop | null>(null);
   const [added, setAdded] = useState(false);
   const [liked, setLiked] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      const [allProducts, allShops] = await Promise.all([fetchProducts(), fetchShops()]);
+      const nextProduct = allProducts.find((p) => p.id === id) ?? null;
+      const nextShop = nextProduct ? allShops.find((s) => s.id === nextProduct.shopId) ?? null : null;
+      if (cancelled) return;
+      setProduct(nextProduct);
+      setShop(nextShop);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (!product) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-4">
+        <p className="text-muted-foreground">Produit introuvable.</p>
+      </div>
+    );
+  }
 
   const isInCart = items.some((i) => i.product.id === product.id);
 

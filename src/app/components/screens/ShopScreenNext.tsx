@@ -13,27 +13,53 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button, Badge, ProductCard, Header, BottomNav } from "../ds";
-import { SHOPS, PRODUCTS } from "../../data/mock-data";
 import { useAuth } from "../AuthContext";
 import { trackLeadEvent } from "../../services/leadEvents";
+import { fetchProducts, fetchShops } from "../../services/catalog";
+import type { Product, Shop } from "../../types/catalog";
 
 export function ShopScreenNext() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const router = useRouter();
   const push = (path: string) => router.push(path);
-  const shop = SHOPS.find((s) => s.id === id) || SHOPS[0];
-  const shopProducts = PRODUCTS.filter((p) => p.shopId === shop.id);
+  const [shop, setShop] = useState<Shop | null>(null);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const shopProducts = shop ? allProducts.filter((p) => p.shopId === shop.id) : [];
   const [liked, setLiked] = useState(false);
   const { user, isAuthenticated } = useAuth();
 
   useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      const [nextShops, nextProducts] = await Promise.all([fetchShops(), fetchProducts()]);
+      const nextShop = nextShops.find((s) => s.id === id) ?? null;
+      if (cancelled) return;
+      setShop(nextShop);
+      setAllProducts(nextProducts);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (!shop) return;
     trackLeadEvent({
       type: "view_shop",
       shopId: shop.id,
       metadata: { source: "shop_screen" },
     });
-  }, [shop.id]);
+  }, [shop?.id]);
+
+  if (!shop) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-4">
+        <p className="text-muted-foreground">Boutique introuvable.</p>
+      </div>
+    );
+  }
 
   const handleCallShop = () => {
     trackLeadEvent({
@@ -64,12 +90,7 @@ export function ShopScreenNext() {
   };
 
   // Fill with related products if too few
-  const displayProducts = shopProducts.length >= 3
-    ? shopProducts
-    : [
-        ...shopProducts,
-        ...PRODUCTS.filter((p) => p.shopId !== shop.id).slice(0, 3 - shopProducts.length),
-      ];
+  const displayProducts = shopProducts;
 
   return (
     <div className="min-h-screen flex flex-col bg-background pb-16">

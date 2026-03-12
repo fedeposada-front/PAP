@@ -3,7 +3,7 @@
 import { Button, StatCard, Logo } from "../ds";
 import { useAuth } from "../AuthContext";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Plus,
   Eye,
@@ -13,11 +13,15 @@ import {
   Store,
 } from "lucide-react";
 import { getLeadStats } from "../../services/leadEvents";
+import { fetchSellerProducts } from "../../services/sellerProducts";
+import type { Product } from "../../types/catalog";
 
 export function DashboardScreenNext() {
   const router = useRouter();
   const push = (path: string) => router.push(path);
-  const { user } = useAuth();
+  const { user, accessToken } = useAuth();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const fullName = `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim();
   const displayName = user?.shopName || fullName || "Votre boutique";
 
@@ -32,6 +36,34 @@ export function DashboardScreenNext() {
       push("/siret");
     }
   }, [user, push]);
+
+  useEffect(() => {
+    if (!user?.id || !accessToken || !user?.siretVerified) {
+      setProducts([]);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingProducts(true);
+    const run = async () => {
+      try {
+        const nextProducts = await fetchSellerProducts({
+          userId: user.id,
+          accessToken,
+        });
+        if (!cancelled) setProducts(nextProducts);
+      } catch {
+        if (!cancelled) setProducts([]);
+      } finally {
+        if (!cancelled) setIsLoadingProducts(false);
+      }
+    };
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.siretVerified, accessToken]);
 
   if (!user || !user.siretVerified) {
     return null;
@@ -103,6 +135,39 @@ export function DashboardScreenNext() {
             label="Messages"
             value={String(leadStats.clickMessage)}
           />
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <h4>Mes produits</h4>
+            <Button size="sm" variant="outline" onClick={() => push("/add-product")}>
+              Ajouter
+            </Button>
+          </div>
+          {isLoadingProducts && (
+            <p className="text-sm text-muted-foreground">Chargement...</p>
+          )}
+          {!isLoadingProducts && products.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Aucun produit pour le moment.
+            </p>
+          )}
+          {!isLoadingProducts && products.length > 0 && (
+            <div className="space-y-2">
+              {products.slice(0, 8).map((product) => (
+                <button
+                  key={product.id}
+                  onClick={() => push(`/product/${product.id}`)}
+                  className="w-full rounded-xl bg-muted/40 px-3 py-2 text-left hover:bg-muted/70 transition-colors"
+                >
+                  <p className="truncate">{product.title}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {product.price.toFixed(2)} € · Stock {product.stock}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-6">

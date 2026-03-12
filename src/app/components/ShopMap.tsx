@@ -1,8 +1,19 @@
-import { useEffect, useRef } from "react";
-import * as L from "leaflet";
-import type { Shop } from "../data/mock-data";
+"use client";
 
-function createShopIcon(isOpen: boolean) {
+import { useEffect, useRef } from "react";
+import type { Shop } from "../types/catalog";
+
+interface ShopMapProps {
+  shops: Shop[];
+  onShopClick: (shopId: string) => void;
+  className?: string;
+  center?: [number, number];
+  cityLabel?: string;
+}
+
+const CENTER: [number, number] = [49.8941, 2.2958];
+
+function createShopIcon(L: any, isOpen: boolean) {
   const color = isOpen ? "#EB7276" : "#9ca3af";
   return L.divIcon({
     className: "custom-marker",
@@ -30,111 +41,109 @@ function createShopIcon(isOpen: boolean) {
   });
 }
 
-const userIcon = L.divIcon({
-  className: "user-marker",
-  html: `<div style="position:relative;">
-    <div style="
-      width: 18px; height: 18px;
-      background: #3b82f6;
-      border: 3px solid white;
-      border-radius: 50%;
-      box-shadow: 0 2px 8px rgba(59,130,246,0.5);
-    "></div>
-    <div style="
-      position: absolute; top: -6px; left: -6px;
-      width: 30px; height: 30px;
-      background: rgba(59,130,246,0.15);
-      border-radius: 50%;
-      animation: ping 1.5s cubic-bezier(0,0,0.2,1) infinite;
-    "></div>
-  </div>`,
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
-});
-
-interface ShopMapProps {
-  shops: Shop[];
-  onShopClick: (shopId: string) => void;
-  className?: string;
-  center?: [number, number];
-  cityLabel?: string;
+function createUserIcon(L: any) {
+  return L.divIcon({
+    className: "user-marker",
+    html: `<div style="position:relative;">
+      <div style="
+        width: 18px; height: 18px;
+        background: #3b82f6;
+        border: 3px solid white;
+        border-radius: 50%;
+        box-shadow: 0 2px 8px rgba(59,130,246,0.5);
+      "></div>
+      <div style="
+        position: absolute; top: -6px; left: -6px;
+        width: 30px; height: 30px;
+        background: rgba(59,130,246,0.15);
+        border-radius: 50%;
+        animation: ping 1.5s cubic-bezier(0,0,0.2,1) infinite;
+      "></div>
+    </div>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  });
 }
-
-const CENTER: L.LatLngTuple = [49.8941, 2.2958];
 
 export function ShopMap({ shops, onShopClick, className = "", center, cityLabel }: ShopMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const markersRef = useRef<L.LayerGroup | null>(null);
-  const userMarkerRef = useRef<L.Marker | null>(null);
+  const mapRef = useRef<any>(null);
+  const markersRef = useRef<any>(null);
+  const userMarkerRef = useRef<any>(null);
+  const leafletRef = useRef<any>(null);
   const onShopClickRef = useRef(onShopClick);
   onShopClickRef.current = onShopClick;
 
-  const mapCenter: L.LatLngTuple = center ?? CENTER;
+  const mapCenter = center ?? CENTER;
   const centerLat = mapCenter[0];
   const centerLng = mapCenter[1];
 
-  // Initialize map once
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    const map = L.map(containerRef.current, {
-      center: mapCenter,
-      zoom: 14,
-      zoomControl: false,
-      attributionControl: false,
-    });
+    let cancelled = false;
+    let resizeObserver: ResizeObserver | null = null;
 
-    L.tileLayer(
-      "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-      {
+    const run = async () => {
+      const L = await import("leaflet");
+      if (cancelled || !containerRef.current) return;
+
+      leafletRef.current = L;
+
+      const map = L.map(containerRef.current, {
+        center: mapCenter,
+        zoom: 14,
+        zoomControl: false,
+        attributionControl: false,
+      });
+
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
         attribution:
           '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-      }
-    ).addTo(map);
+      }).addTo(map);
 
-    // User position marker
-    const userMarker = L.marker(mapCenter, { icon: userIcon })
-      .addTo(map)
-      .bindPopup(
-        `<div style="text-align:center;padding:2px 4px;">
-          <strong>Vous êtes ici</strong><br/>
-          <span style="font-size:12px;color:#6b7280;">${cityLabel ?? "Amiens"}</span>
-        </div>`
-      );
-    userMarkerRef.current = userMarker;
+      const userMarker = L.marker(mapCenter, { icon: createUserIcon(L) })
+        .addTo(map)
+        .bindPopup(
+          `<div style="text-align:center;padding:2px 4px;">
+            <strong>Vous êtes ici</strong><br/>
+            <span style="font-size:12px;color:#6b7280;">${cityLabel ?? "Amiens"}</span>
+          </div>`
+        );
 
-    markersRef.current = L.layerGroup().addTo(map);
-    mapRef.current = map;
+      userMarkerRef.current = userMarker;
+      markersRef.current = L.layerGroup().addTo(map);
+      mapRef.current = map;
 
-    // Event delegation: handle clicks on shop popups via the map container
-    containerRef.current.addEventListener("click", (e) => {
-      const target = (e.target as HTMLElement).closest("[data-shop-id]") as HTMLElement | null;
-      if (target) {
+      containerRef.current.addEventListener("click", (e) => {
+        const target = (e.target as HTMLElement).closest("[data-shop-id]") as HTMLElement | null;
+        if (!target) return;
         const shopId = target.getAttribute("data-shop-id");
-        if (shopId) {
-          onShopClickRef.current(shopId);
-        }
-      }
-    });
+        if (shopId) onShopClickRef.current(shopId);
+      });
 
-    // Invalidate size after render + on resize so tiles load correctly
-    setTimeout(() => map.invalidateSize(), 200);
+      setTimeout(() => map.invalidateSize(), 200);
 
-    const ro = new ResizeObserver(() => {
-      map.invalidateSize();
-    });
-    ro.observe(containerRef.current);
+      resizeObserver = new ResizeObserver(() => {
+        map.invalidateSize();
+      });
+      resizeObserver.observe(containerRef.current);
+    };
+
+    void run();
 
     return () => {
-      ro.disconnect();
-      map.remove();
-      mapRef.current = null;
+      cancelled = true;
+      if (resizeObserver) resizeObserver.disconnect();
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
       markersRef.current = null;
+      userMarkerRef.current = null;
     };
   }, []);
 
-  // Update center when location changes
   useEffect(() => {
     const map = mapRef.current;
     const userMarker = userMarkerRef.current;
@@ -150,19 +159,18 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
     );
   }, [centerLat, centerLng, cityLabel]);
 
-  // Update shop markers when shops change
   useEffect(() => {
+    const L = leafletRef.current;
     const map = mapRef.current;
     const markersGroup = markersRef.current;
-    if (!map || !markersGroup) return;
+    if (!L || !map || !markersGroup) return;
 
     markersGroup.clearLayers();
-
     if (shops.length === 0) return;
 
     shops.forEach((shop) => {
       const marker = L.marker([shop.lat, shop.lng], {
-        icon: createShopIcon(shop.isOpen),
+        icon: createShopIcon(L, shop.isOpen),
       });
 
       const popupContent = `
@@ -183,28 +191,18 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
         </div>`;
 
       marker.bindPopup(popupContent);
-
-      marker.on("click", () => {
-        marker.openPopup();
-      });
-
+      marker.on("click", () => marker.openPopup());
       marker.on("popupopen", () => {
         const popupEl = marker.getPopup()?.getElement();
-        const clickTarget = popupEl?.querySelector(
-          "[data-shop-id]"
-        ) as HTMLElement | null;
+        const clickTarget = popupEl?.querySelector("[data-shop-id]") as HTMLElement | null;
         if (clickTarget) {
-          clickTarget.onclick = () => {
-            onShopClickRef.current(shop.id);
-          };
+          clickTarget.onclick = () => onShopClickRef.current(shop.id);
         }
       });
 
       markersGroup.addLayer(marker);
     });
 
-    // Always keep the map centered on the user's selected city
-    // Nearby shops will appear as markers around that center
     map.setView(mapCenter, 14);
   }, [shops, centerLat, centerLng]);
 

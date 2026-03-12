@@ -1,6 +1,6 @@
 import { MapPin, Star, Clock, Truck, ShoppingBag } from "lucide-react";
-import type { Shop, Product } from "../data/mock-data";
-import { CATEGORIES } from "../data/mock-data";
+import type { Shop, Product } from "../types/catalog";
+import { CATEGORIES } from "../data/catalog";
 import logoImg from "../../assets/logo.png";
 import giftIcon from "../../assets/gift-icon.png";
 

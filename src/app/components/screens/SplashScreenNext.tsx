@@ -11,6 +11,20 @@ export function SplashScreenNext() {
   const { isAuthenticated, isLoading, user } = useAuth();
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const searchParams = new URLSearchParams(window.location.search);
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const isRecoveryLink =
+        searchParams.get("type") === "recovery" ||
+        hashParams.get("type") === "recovery";
+
+      if (isRecoveryLink) {
+        const hash = window.location.hash || "";
+        router.replace(`/auth?flow=recovery${hash}`);
+        return;
+      }
+    }
+
     if (isLoading) return;
 
     const targetPath = isAuthenticated

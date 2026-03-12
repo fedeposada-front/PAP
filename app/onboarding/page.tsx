@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import { Button, Logo } from "../../src/app/components/ds";
-import { ONBOARDING_SLIDES } from "../../src/app/data/mock-data";
+import { ONBOARDING_SLIDES } from "../../src/app/data/catalog";
 import giftIcon from "../../src/assets/gift-icon.png";
 
 export default function OnboardingPage() {

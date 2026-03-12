@@ -113,16 +113,6 @@ export function BuyerProfileScreenNext() {
 
   const avatarFallback = `${firstName.charAt(0)}${lastName.charAt(0)}`.trim().toUpperCase() || "P";
 
-  const orders = [
-    { id: "CMD-1042", label: "Coffret macarons", status: "Retrait aujourd'hui" },
-    { id: "CMD-1031", label: "Bougie artisanale", status: "Livree" },
-  ];
-
-  const reviews = [
-    { shop: "Maison Dupont", rating: 5, text: "Excellent accueil et produit top." },
-    { shop: "Atelier Luna", rating: 4, text: "Tres belle qualite, retrait rapide." },
-  ];
-
   const handleAvatarUpload = (file: File) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -294,14 +284,7 @@ export function BuyerProfileScreenNext() {
             <Package className="w-4 h-4 text-bleu" />
             Mes commandes
           </h4>
-          <div className="space-y-2">
-            {orders.map((order) => (
-              <div key={order.id} className="rounded-xl bg-muted/40 px-3 py-2">
-                <p>{order.label}</p>
-                <p className="text-xs text-muted-foreground">{order.id} · {order.status}</p>
-              </div>
-            ))}
-          </div>
+          <p className="text-sm text-muted-foreground">Aucune commande pour le moment.</p>
         </div>
 
         <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4">
@@ -309,14 +292,7 @@ export function BuyerProfileScreenNext() {
             <Star className="w-4 h-4 text-yellow-500" />
             Mes evaluations
           </h4>
-          <div className="space-y-2">
-            {reviews.map((review) => (
-              <div key={review.shop} className="rounded-xl bg-muted/40 px-3 py-2">
-                <p>{review.shop} · {review.rating}/5</p>
-                <p className="text-xs text-muted-foreground">{review.text}</p>
-              </div>
-            ))}
-          </div>
+          <p className="text-sm text-muted-foreground">Aucune evaluation pour le moment.</p>
         </div>
 
         <Button fullWidth variant="outline" onClick={handleLogout} icon={<LogOut className="w-4 h-4" />}>

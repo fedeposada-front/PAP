@@ -1,32 +1,107 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Camera,
   X,
   MapPin,
   Truck,
   Check,
+  Image as ImageIcon,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { Button, Input, Badge, Header, Chip, CategoryIcon } from "../ds";
-import { CATEGORIES, IMAGES } from "../../data/mock-data";
+import { CATEGORIES } from "../../data/catalog";
 import { useAuth } from "../AuthContext";
+import { createSellerProduct } from "../../services/sellerProducts";
 
 export function AddProductScreenNext() {
   const router = useRouter();
   const push = (path: string) => router.push(path);
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, accessToken } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [published, setPublished] = useState(false);
-  const [photos, setPhotos] = useState<string[]>([IMAGES.macarons]);
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [mainPhotoIndex, setMainPhotoIndex] = useState(0);
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("5");
-  const [category, setCategory] = useState("");
+  const [categories, setCategories] = useState<string[]>([]);
   const [pickup, setPickup] = useState(true);
   const [delivery, setDelivery] = useState(false);
   const [description, setDescription] = useState("");
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [isPublishing, setIsPublishing] = useState(false);
+
+  const maxPhotos = 5;
+
+  const handlePhotoFiles = (fileList: FileList | null) => {
+    if (!fileList) return;
+
+    const files = Array.from(fileList);
+    const remainingSlots = maxPhotos - photos.length;
+    const nextFiles = files.slice(0, remainingSlots);
+    const nextErrors: string[] = [];
+
+    if (files.length > remainingSlots) {
+      nextErrors.push(`Maximum ${maxPhotos} photos.`);
+    }
+
+    for (const file of nextFiles) {
+      if (!file.type.startsWith("image/")) {
+        nextErrors.push(`${file.name}: format non supporte.`);
+        continue;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        nextErrors.push(`${file.name}: fichier trop lourd (max 5MB).`);
+        continue;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        if (typeof dataUrl !== "string") return;
+        setPhotos((prev) => [...prev, dataUrl].slice(0, maxPhotos));
+      };
+      reader.readAsDataURL(file);
+    }
+
+    setValidationErrors(nextErrors);
+  };
+
+  const removePhoto = (photoIndex: number) => {
+    setPhotos((prev) => prev.filter((_, idx) => idx !== photoIndex));
+    setMainPhotoIndex((prev) => {
+      if (photoIndex < prev) return prev - 1;
+      if (photoIndex === prev) return 0;
+      return prev;
+    });
+  };
+
+  const toggleCategory = (categoryId: string) => {
+    setCategories((prev) => (
+      prev.includes(categoryId)
+        ? prev.filter((id) => id !== categoryId)
+        : [...prev, categoryId]
+    ));
+  };
+
+  const validateForm = () => {
+    const errors: string[] = [];
+    const parsedPrice = Number(price.replace(",", "."));
+    const parsedStock = Number(stock);
+
+    if (photos.length < 1) errors.push("Ajoutez au moins 1 photo.");
+    if (title.trim().length < 3) errors.push("Le titre doit contenir au moins 3 caracteres.");
+    if (description.trim().length < 20) errors.push("La description doit contenir au moins 20 caracteres.");
+    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) errors.push("Le prix doit etre superieur a 0.");
+    if (!Number.isInteger(parsedStock) || parsedStock < 1) errors.push("Le stock doit etre un entier superieur ou egal a 1.");
+    if (categories.length < 1) errors.push("Selectionnez au moins 1 categorie.");
+    if (!pickup && !delivery) errors.push("Activez au moins un mode de remise (retrait ou livraison).");
+
+    setValidationErrors(errors);
+    return errors.length === 0;
+  };
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -70,6 +145,9 @@ export function AddProductScreenNext() {
             setPrice("");
             setDescription("");
             setPhotos([]);
+            setMainPhotoIndex(0);
+            setCategories([]);
+            setValidationErrors([]);
           }}>
             Ajouter un autre produit
           </Button>
@@ -88,6 +166,17 @@ export function AddProductScreenNext() {
           <label className="text-sm mb-2 block">
             Photos <span className="text-muted-foreground">(min. 1, max. 5)</span>
           </label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              handlePhotoFiles(e.target.files);
+              e.currentTarget.value = "";
+            }}
+          />
           <div className="flex gap-3 overflow-x-auto pb-2">
             {photos.map((photo, i) => (
               <div
@@ -95,10 +184,22 @@ export function AddProductScreenNext() {
                 className="relative w-24 h-24 rounded-xl overflow-hidden flex-shrink-0 border border-border"
               >
                 <img src={photo} alt="" className="w-full h-full object-cover" />
+                {i === mainPhotoIndex ? (
+                  <span className="absolute left-1 top-1 text-[10px] px-1.5 py-0.5 rounded-full bg-white/90">
+                    Principale
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setMainPhotoIndex(i)}
+                    className="absolute left-1 top-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/55 text-white"
+                  >
+                    Definir principale
+                  </button>
+                )}
                 <button
-                  onClick={() =>
-                    setPhotos(photos.filter((_, idx) => idx !== i))
-                  }
+                  type="button"
+                  onClick={() => removePhoto(i)}
                   className="absolute top-1 right-1 w-5 h-5 bg-black/50 rounded-full flex items-center justify-center"
                 >
                   <X className="w-3 h-3 text-white" />
@@ -106,10 +207,12 @@ export function AddProductScreenNext() {
               </div>
             ))}
             <button
-              onClick={() => setPhotos([...photos, IMAGES.chocolate])}
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={photos.length >= maxPhotos}
               className="w-24 h-24 rounded-xl border-2 border-dashed border-border flex flex-col items-center justify-center gap-1 text-muted-foreground hover:border-coral/30 hover:text-coral transition-colors flex-shrink-0"
             >
-              <Camera className="w-5 h-5" />
+              <ImageIcon className="w-5 h-5" />
               <span className="text-xs">Ajouter</span>
             </button>
           </div>
@@ -143,14 +246,17 @@ export function AddProductScreenNext() {
             {CATEGORIES.filter((c) => c.id !== "all").map((cat) => (
               <Chip
                 key={cat.id}
-                active={category === cat.id}
-                onClick={() => setCategory(cat.id)}
+                active={categories.includes(cat.id)}
+                onClick={() => toggleCategory(cat.id)}
                 icon={<CategoryIcon icon={cat.icon} className="text-sm w-4 h-4" />}
               >
                 {cat.label}
               </Chip>
             ))}
           </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            Vous pouvez selectionner plusieurs categories.
+          </p>
         </div>
 
         {/* Price + Stock */}
@@ -238,12 +344,64 @@ export function AddProductScreenNext() {
             fullWidth
             variant="accent"
             size="lg"
-            onClick={() => setPublished(true)}
-            disabled={isBusinessDeactivated}
+            onClick={() => {
+              const run = async () => {
+                if (!validateForm()) return;
+                if (!user?.id || !accessToken) {
+                  setValidationErrors(["Session invalide. Merci de vous reconnecter."]);
+                  return;
+                }
+
+                setIsPublishing(true);
+                setValidationErrors([]);
+                try {
+                  const normalizedMainPhotoIndex = Math.min(mainPhotoIndex, Math.max(0, photos.length - 1));
+                  const mainImageUrl = photos[normalizedMainPhotoIndex];
+                  await createSellerProduct({
+                    userId: user.id,
+                    accessToken,
+                    title: title.trim(),
+                    description: description.trim(),
+                    price: Number(price.replace(",", ".")),
+                    stock: Number(stock),
+                    categories,
+                    pickup,
+                    delivery,
+                    mainImageUrl,
+                    imageUrls: photos,
+                  });
+                  setPublished(true);
+                } catch (error) {
+                  const rawMessage = error instanceof Error ? error.message : "Impossible de publier le produit.";
+                  const message = rawMessage.includes("products_main_image_required_if_published")
+                    ? "Choisissez une image principale valide."
+                    : rawMessage.includes("schema cache") || rawMessage.includes("column")
+                      ? "Base de données pas à jour. Lancez les migrations Supabase puis réessayez."
+                      : rawMessage.includes("payload too large")
+                        ? "Images trop lourdes. Réduisez la taille des photos puis réessayez."
+                        : rawMessage;
+                  setValidationErrors([message]);
+                } finally {
+                  setIsPublishing(false);
+                }
+              };
+              void run();
+            }}
+            disabled={isBusinessDeactivated || isPublishing}
           >
-            Publier
+            {isPublishing ? "Publication..." : "Publier"}
           </Button>
         </div>
+        {validationErrors.length > 0 && (
+          <div className="rounded-xl bg-red-50 border border-red-100 p-3 mb-6">
+            <p className="text-sm text-destructive mb-1">Veuillez corriger :</p>
+            <ul className="text-xs text-destructive space-y-0.5">
+              {validationErrors.map((error) => (
+                <li key={error}>• {error}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         {isBusinessDeactivated && (
           <p className="text-sm text-destructive text-center -mt-4 pb-8">
             Votre entreprise est désactivée. Réactivez-la dans Paramètres pour publier.

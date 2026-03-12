@@ -1,6 +1,5 @@
 "use client";
 
-import { CATEGORIES, SHOPS, PRODUCTS } from "../../data/mock-data";
 import { ShopMap } from "../ShopMap";
 import { SponsoredCard } from "../SponsoredCard";
 import { useLocation } from "../LocationContext";
@@ -39,6 +38,9 @@ import {
   trackAdImpression,
   type SponsoredAd,
 } from "../../services/ads";
+import { fetchProducts, fetchShops } from "../../services/catalog";
+import { CATEGORIES } from "../../data/catalog";
+import type { Product, Shop } from "../../types/catalog";
 
 export function HomeScreenNext() {
   const router = useRouter();
@@ -58,7 +60,10 @@ export function HomeScreenNext() {
     delivery: false,
   });
 
-  const filteredShops = SHOPS.filter((s) => {
+  const [shops, setShops] = useState<Shop[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+
+  const filteredShops = shops.filter((s) => {
     if (activeCategory !== "all" && s.category !== activeCategory) return false;
     if (filters.openNow && !s.isOpen) return false;
     if (filters.pickupToday && !s.pickupToday) return false;
@@ -67,7 +72,7 @@ export function HomeScreenNext() {
     return true;
   });
 
-  const filteredProducts = PRODUCTS.filter((p) => {
+  const filteredProducts = products.filter((p) => {
     if (activeCategory !== "all" && p.category !== activeCategory) return false;
     if (filters.pickupToday && !p.availableToday) return false;
     if (filters.delivery && !p.delivery) return false;
@@ -105,6 +110,23 @@ export function HomeScreenNext() {
       cancelled = true;
     };
   }, [location.cityName]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      const [nextShops, nextProducts] = await Promise.all([
+        fetchShops(),
+        fetchProducts(),
+      ]);
+      if (cancelled) return;
+      setShops(nextShops);
+      setProducts(nextProducts);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!sponsoredAd) return;
