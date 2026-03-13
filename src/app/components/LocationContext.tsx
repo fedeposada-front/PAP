@@ -25,6 +25,31 @@ interface LocationContextType {
 const LOCATION_STORAGE_KEY = "mcl_location_v1";
 const GEO_ATTEMPTED_STORAGE_KEY = "mcl_geo_attempted_v1";
 
+async function reverseGeocode(lat: number, lng: number): Promise<Partial<LocationData>> {
+  try {
+    const res = await fetch(
+      `https://geo.api.gouv.fr/communes?lat=${lat}&lon=${lng}&fields=nom,codesPostaux,departement&format=json&geometry=centre`
+    );
+    if (!res.ok) return {};
+    const rows = (await res.json()) as Array<{
+      nom?: string;
+      codesPostaux?: string[];
+      departement?: { nom?: string; code?: string };
+    }>;
+    const first = rows[0];
+    if (!first) return {};
+    return {
+      cityName: first.nom ?? "Ma position",
+      postalCode: first.codesPostaux?.[0] ?? "",
+      department: first.departement?.nom && first.departement?.code
+        ? `${first.departement.nom} (${first.departement.code})`
+        : "",
+    };
+  } catch {
+    return {};
+  }
+}
+
 const LocationContext = createContext<LocationContextType>({
   location: DEFAULT_LOCATION,
   setLocation: () => {},
@@ -53,11 +78,12 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     window.localStorage.setItem(GEO_ATTEMPTED_STORAGE_KEY, "1");
 
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
+        const geo = await reverseGeocode(pos.coords.latitude, pos.coords.longitude);
         const nextLocation: LocationData = {
-          cityName: "Ma position",
-          postalCode: "",
-          department: "",
+          cityName: geo.cityName ?? "Ma position",
+          postalCode: geo.postalCode ?? "",
+          department: geo.department ?? "",
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
         };

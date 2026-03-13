@@ -6,6 +6,8 @@ import { Button, Header, Input, Badge } from "../ds";
 import { useAuth } from "../AuthContext";
 import { AddressAutocompleteInput, type AddressSuggestion } from "../AddressAutocompleteInput";
 import { fetchShopSettings, saveShopSettings } from "../../services/shopSettings";
+import { getPasswordRuleMessage } from "../../utils/passwordRules";
+import { CATEGORY_GROUPS } from "../../data/catalog";
 import {
   Building2,
   MapPin,
@@ -76,6 +78,7 @@ export function SettingsScreenNext() {
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   const [shopName, setShopName] = useState(user?.shopName ?? "");
+  const [shopCategory, setShopCategory] = useState("");
   const [shopDesc, setShopDesc] = useState("");
   const [shopAddress, setShopAddress] = useState(user?.shopAddress ?? "");
   const [shopCity, setShopCity] = useState("");
@@ -93,6 +96,7 @@ export function SettingsScreenNext() {
   const [deliveryCarrier, setDeliveryCarrier] = useState(false);
   const [vacationMode, setVacationMode] = useState(Boolean(user?.sellerVacationMode));
   const [businessDeactivated, setBusinessDeactivated] = useState(Boolean(user?.sellerDeactivated));
+  const [shopPublished, setShopPublished] = useState(false);
 
   // Notifications
   const [notifOrders, setNotifOrders] = useState(true);
@@ -130,6 +134,7 @@ export function SettingsScreenNext() {
         if (!shop || cancelled) return;
 
         setShopName(shop.name ?? "");
+        setShopCategory(shop.category ?? "");
         setShopDesc(shop.description ?? "");
         setShopAddress(shop.address ?? "");
         setShopPostal(shop.postal_code ?? "");
@@ -143,6 +148,7 @@ export function SettingsScreenNext() {
         setDeliveryPost(Boolean(shop.delivery_post ?? false));
         setDeliveryCarrier(Boolean(shop.delivery_carrier ?? false));
         setOpenHolidays(Boolean(shop.open_holidays));
+        setShopPublished(Boolean(shop.is_published));
         if (shop.opening_hours && typeof shop.opening_hours === "object") {
           setSchedule((prev) => ({ ...prev, ...(shop.opening_hours as Record<string, DaySchedule>) }));
         }
@@ -223,7 +229,7 @@ export function SettingsScreenNext() {
     reader.readAsDataURL(file);
   };
 
-  const handleSave = () => {
+  const handleSave = (publishTarget: boolean) => {
     const run = async () => {
       setSaved(false);
       if (!user?.id || !accessToken) {
@@ -233,6 +239,7 @@ export function SettingsScreenNext() {
 
       const errors: string[] = [];
       if (shopName.trim().length < 2) errors.push("Nom de boutique requis (min 2 caracteres).");
+      if (shopCategory.trim().length < 2) errors.push("Catégorie boutique requise.");
       if (shopAddress.trim().length < 6) errors.push("Adresse invalide.");
       if (!/^[0-9]{5}$/.test(shopPostal.trim())) errors.push("Code postal invalide (5 chiffres).");
       if (shopCity.trim().length < 2) errors.push("Ville invalide.");
@@ -260,6 +267,7 @@ export function SettingsScreenNext() {
         userId: user.id,
         accessToken,
         shopName: shopName.trim(),
+        shopCategory: shopCategory.trim(),
         shopDesc: shopDesc.trim(),
         shopAddress: shopAddress.trim(),
         shopCity: shopCity.trim(),
@@ -276,8 +284,10 @@ export function SettingsScreenNext() {
         deliveryCarrier,
         logoImage: logoImage ?? null,
         bannerImage: bannerImage ?? null,
+        isPublished: publishTarget,
       });
       setShopName(persistedShop.name ?? "");
+      setShopCategory(persistedShop.category ?? "");
       setShopDesc(persistedShop.description ?? "");
       setShopAddress(persistedShop.address ?? "");
       setShopPostal(persistedShop.postal_code ?? "");
@@ -291,6 +301,7 @@ export function SettingsScreenNext() {
       setDeliveryPost(Boolean(persistedShop.delivery_post ?? false));
       setDeliveryCarrier(Boolean(persistedShop.delivery_carrier ?? false));
       setOpenHolidays(Boolean(persistedShop.open_holidays ?? false));
+      setShopPublished(Boolean(persistedShop.is_published ?? false));
       if (persistedShop.logo_image_url && !persistedShop.logo_image_url.startsWith("blob:")) {
         setLogoImage(persistedShop.logo_image_url);
       }
@@ -495,8 +506,9 @@ export function SettingsScreenNext() {
         setAccountError("Les mots de passe ne correspondent pas.");
         return;
       }
-      if (newPassword.length < 8) {
-        setAccountError("Le mot de passe doit contenir au moins 8 caractères.");
+      const passwordError = getPasswordRuleMessage(newPassword);
+      if (passwordError) {
+        setAccountError(passwordError);
         return;
       }
       setIsSavingAccount(true);
@@ -629,6 +641,28 @@ export function SettingsScreenNext() {
                       onChange={setShopName}
                       icon={<Pencil className="w-4 h-4" />}
                     />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Secteur / service principal
+                    </label>
+                    <select
+                      value={shopCategory}
+                      onChange={(event) => setShopCategory(event.target.value)}
+                      className="w-full min-h-14 bg-input-background rounded-xl px-4 py-3 outline-none border border-transparent focus:border-green/50 focus:ring-2 focus:ring-green/30"
+                    >
+                      <option value="">Choisir une sous-catégorie</option>
+                      {CATEGORY_GROUPS.map((group) => (
+                        <optgroup key={group.id} label={group.label}>
+                          {group.children.map((subcategory) => (
+                            <option key={subcategory.id} value={subcategory.id}>
+                              {subcategory.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
                   </div>
 
                   <div>
@@ -998,10 +1032,20 @@ export function SettingsScreenNext() {
                 size="lg"
                 variant="accent"
                 icon={<Save className="w-4 h-4" />}
-                onClick={handleSave}
+                onClick={() => handleSave(false)}
                 disabled={isSaving}
               >
-                {saved ? "Enregistré !" : isSaving ? "Enregistrement..." : "Enregistrer les modifications"}
+                {saved && !shopPublished ? "Brouillon enregistré !" : isSaving ? "Enregistrement..." : "Enregistrer en brouillon"}
+              </Button>
+              <Button
+                fullWidth
+                size="lg"
+                variant="accent"
+                icon={<Save className="w-4 h-4" />}
+                onClick={() => handleSave(true)}
+                disabled={isSaving}
+              >
+                {saved && shopPublished ? "Boutique publiée !" : isSaving ? "Publication..." : "Publier la boutique"}
               </Button>
               {saveError && (
                 <p className="text-sm text-destructive text-center">{saveError}</p>
@@ -1263,7 +1307,7 @@ export function SettingsScreenNext() {
                 size="lg"
                 variant="accent"
                 icon={<Save className="w-4 h-4" />}
-                onClick={handleSave}
+                onClick={() => handleSave(shopPublished)}
               >
                 {saved ? "Enregistré !" : "Enregistrer"}
               </Button>

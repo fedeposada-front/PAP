@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { MapPin, Navigation, Search, Loader2 } from "lucide-react";
 import { Button, Header } from "../../src/app/components/ds";
+import { useLocation } from "../../src/app/components/LocationContext";
 
 interface CityResult {
   nom: string;
@@ -22,9 +23,6 @@ interface LocationData {
   lat: number;
   lng: number;
 }
-
-const LOCATION_STORAGE_KEY = "mcl_location_v1";
-const GEO_ATTEMPTED_STORAGE_KEY = "mcl_geo_attempted_v1";
 
 function useDebounce(value: string, delay: number) {
   const [debounced, setDebounced] = useState(value);
@@ -47,14 +45,34 @@ const POPULAR_CITIES = [
   { nom: "Lille", cp: "59000", dep: "Nord (59)", lat: 50.6292, lng: 3.0573 },
 ];
 
-function persistLocation(loc: LocationData) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(LOCATION_STORAGE_KEY, JSON.stringify(loc));
-  window.localStorage.setItem(GEO_ATTEMPTED_STORAGE_KEY, "1");
+async function reverseGeocode(lat: number, lng: number): Promise<Partial<LocationData>> {
+  try {
+    const res = await fetch(
+      `https://geo.api.gouv.fr/communes?lat=${lat}&lon=${lng}&fields=nom,codesPostaux,departement&format=json&geometry=centre`
+    );
+    if (!res.ok) return {};
+    const rows = (await res.json()) as Array<{
+      nom?: string;
+      codesPostaux?: string[];
+      departement?: { nom?: string; code?: string };
+    }>;
+    const first = rows[0];
+    if (!first) return {};
+    return {
+      cityName: first.nom ?? "Ma position",
+      postalCode: first.codesPostaux?.[0] ?? "",
+      department: first.departement?.nom && first.departement?.code
+        ? `${first.departement.nom} (${first.departement.code})`
+        : "",
+    };
+  } catch {
+    return {};
+  }
 }
 
 export default function LocationPage() {
   const router = useRouter();
+  const { setLocation } = useLocation();
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<CityResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -96,7 +114,7 @@ export default function LocationPage() {
   }, [debouncedSearch, fetchCities]);
 
   const handleSelectCity = (name: string, cp: string, dep: string, lat: number, lng: number) => {
-    persistLocation({
+    setLocation({
       cityName: name,
       postalCode: cp,
       department: dep,
@@ -115,18 +133,31 @@ export default function LocationPage() {
     }
 
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        persistLocation({
-          cityName: "Ma position",
-          postalCode: "",
-          department: "",
+      async (pos) => {
+        const geo = await reverseGeocode(pos.coords.latitude, pos.coords.longitude);
+        setLocation({
+          cityName: geo.cityName ?? "Ma position",
+          postalCode: geo.postalCode ?? "",
+          department: geo.department ?? "",
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
         });
         router.push("/home");
       },
-      () => {
-        setGeoError("La position actuelle n'a pas pu etre recuperee. Autorise la geolocalisation ou choisis une ville.");
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          setGeoError("Permission refusée. Active la localisation dans ton navigateur.");
+          return;
+        }
+        if (error.code === error.TIMEOUT) {
+          setGeoError("Délai dépassé. Réessaie ou choisis une ville manuellement.");
+          return;
+        }
+        if (error.code === error.POSITION_UNAVAILABLE) {
+          setGeoError("Position indisponible actuellement. Réessaie dans quelques secondes.");
+          return;
+        }
+        setGeoError("La position actuelle n'a pas pu être récupérée. Autorise la géolocalisation ou choisis une ville.");
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
     );

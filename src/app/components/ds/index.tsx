@@ -1,4 +1,5 @@
 import React from "react";
+import Link from "next/link";
 import {
   Star,
   MapPin,
@@ -393,20 +394,22 @@ export function BottomSheet({
 }
 
 // ─── LOGO ──────────────────────────────────────────────
-export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" | "xl" | "2xl" | "full" }) {
+export function Logo({
+  size = "md",
+  href,
+}: {
+  size?: "sm" | "md" | "lg" | "xl" | "2xl" | "full";
+  href?: string;
+}) {
   const heights = { sm: 32, md: 40, lg: 64, xl: 128, "2xl": 180 };
 
-  if (size === "full") {
-    return (
-      <img
-        src={logoHorizontalImg.src}
-        alt="MonCadeauLocal"
-        className="block w-full max-w-full object-contain"
-      />
-    );
-  }
-
-  return (
+  const image = size === "full" ? (
+    <img
+      src={logoHorizontalImg.src}
+      alt="MonCadeauLocal"
+      className="block w-full max-w-full object-contain"
+    />
+  ) : (
     <img
       src={logoHorizontalImg.src}
       alt="MonCadeauLocal"
@@ -414,6 +417,20 @@ export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" | "xl" | "2xl"
       style={{ height: `${heights[size]}px` }}
     />
   );
+
+  if (href) {
+    return (
+      <Link href={href} className="inline-block" aria-label="Aller à l'accueil">
+        {image}
+      </Link>
+    );
+  }
+
+  if (size === "full") {
+    return image;
+  }
+
+  return image;
 }
 
 // ─── STAT CARD (Seller) ───────────────────────────────

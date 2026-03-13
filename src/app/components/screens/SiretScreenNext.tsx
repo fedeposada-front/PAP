@@ -38,6 +38,7 @@ export function SiretScreenNext() {
   const [companyAddress, setCompanyAddress] = useState("");
   const [isManagerConfirmed, setIsManagerConfirmed] = useState(false);
   const [isSubmittingIdentity, setIsSubmittingIdentity] = useState(false);
+  const [prefilledUserId, setPrefilledUserId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -47,9 +48,16 @@ export function SiretScreenNext() {
     if (user?.siretVerified) {
       push("/dashboard");
     }
-    setFirstName(user?.firstName ?? "");
-    setLastName(user?.lastName ?? "");
-  }, [isAuthenticated, user?.siretVerified, user?.firstName, user?.lastName, push]);
+  }, [isAuthenticated, user?.siretVerified, push]);
+
+  // Prefill identity only once per connected user, to avoid overwriting manual edits.
+  useEffect(() => {
+    if (!user?.id) return;
+    if (prefilledUserId === user.id) return;
+    setFirstName(user.firstName ?? "");
+    setLastName(user.lastName ?? "");
+    setPrefilledUserId(user.id);
+  }, [user?.id, user?.firstName, user?.lastName, prefilledUserId]);
 
   const handleVerify = () => {
     const normalized = siret.replace(/\s/g, "");

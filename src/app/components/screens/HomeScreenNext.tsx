@@ -39,8 +39,20 @@ import {
   type SponsoredAd,
 } from "../../services/ads";
 import { fetchProducts, fetchShops } from "../../services/catalog";
-import { CATEGORIES } from "../../data/catalog";
+import {
+  CATEGORY_GROUPS,
+  CATEGORY_GROUPS_WITH_ALL,
+  matchesCategoryFilter,
+} from "../../data/catalog";
 import type { Product, Shop } from "../../types/catalog";
+import { getShopHref } from "../../utils/shopRouting";
+
+const normalizeCity = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 
 export function HomeScreenNext() {
   const router = useRouter();
@@ -63,8 +75,49 @@ export function HomeScreenNext() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
 
-  const filteredShops = shops.filter((s) => {
-    if (activeCategory !== "all" && s.category !== activeCategory) return false;
+  const toKmDistance = (fromLat: number, fromLng: number, toLat: number, toLng: number) => {
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const earthKm = 6371;
+    const dLat = toRad(toLat - fromLat);
+    const dLng = toRad(toLng - fromLng);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(fromLat)) * Math.cos(toRad(toLat)) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return earthKm * c;
+  };
+
+  const shopsWithDistance = useMemo(() => {
+    return shops.map((shop) => {
+      const hasCoords = Number.isFinite(shop.lat) && Number.isFinite(shop.lng);
+      const sameCity = normalizeCity(shop.city) === normalizeCity(location.cityName);
+
+      if (!hasCoords && sameCity) {
+        return {
+          ...shop,
+          lat: location.lat,
+          lng: location.lng,
+          distance: "<1 km",
+        };
+      }
+
+      if (!hasCoords) {
+        return {
+          ...shop,
+          distance: shop.city || "-",
+        };
+      }
+      const km = toKmDistance(location.lat, location.lng, shop.lat, shop.lng);
+      return {
+        ...shop,
+        distance: `${km < 1 ? "<1" : km.toFixed(1)} km`,
+      };
+    });
+  }, [shops, location.lat, location.lng, location.cityName]);
+
+  const filteredShops = shopsWithDistance.filter((s) => {
+    if (!matchesCategoryFilter(s.category, activeCategory)) return false;
     if (filters.openNow && !s.isOpen) return false;
     if (filters.pickupToday && !s.pickupToday) return false;
     if (filters.sunday && !s.openSunday) return false;
@@ -73,7 +126,7 @@ export function HomeScreenNext() {
   });
 
   const filteredProducts = products.filter((p) => {
-    if (activeCategory !== "all" && p.category !== activeCategory) return false;
+    if (!matchesCategoryFilter(p.category, activeCategory)) return false;
     if (filters.pickupToday && !p.availableToday) return false;
     if (filters.delivery && !p.delivery) return false;
     return true;
@@ -89,9 +142,9 @@ export function HomeScreenNext() {
   const mapCenter: [number, number] = [location.lat, location.lng];
 
   const activeCat =
-    CATEGORIES.find((c) => c.id === activeCategory) ?? CATEGORIES[0];
-  const featuredCategories = CATEGORIES.filter((cat) =>
-    ["all", "gourmand", "fleurs", "bijoux", "deco", "livres"].includes(cat.id)
+    CATEGORY_GROUPS_WITH_ALL.find((c) => c.id === activeCategory) ?? CATEGORY_GROUPS_WITH_ALL[0];
+  const featuredCategories = CATEGORY_GROUPS_WITH_ALL.filter((cat) =>
+    ["all", "alimentation", "artistique", "mode-beaute", "maison-jardin", "famille-loisirs"].includes(cat.id)
   );
   const firstName = user?.firstName?.trim() || "Profil";
   const avatarInitial = firstName.charAt(0).toUpperCase();
@@ -137,7 +190,7 @@ export function HomeScreenNext() {
     <div className="min-h-screen flex flex-col bg-background pb-16 lg:pb-0">
       {/* Desktop nav */}
       <header className="hidden lg:flex items-center justify-between px-8 py-3 bg-white border-b border-border">
-        <Logo size="lg" />
+        <Logo size="lg" href="/home" />
         <div className="flex-1 max-w-xl mx-8">
           <Input
             placeholder="Rechercher un cadeau, une boutique..."
@@ -222,7 +275,7 @@ export function HomeScreenNext() {
       <div className="lg:hidden bg-white pb-2 shadow-sm">
         {/* Row 1: Logo + action icons */}
         <div className="flex items-center justify-between px-4 pt-3 pb-2">
-          <Logo size="md" />
+          <Logo size="md" href="/home" />
           <div className="flex items-center gap-1">
             <button
               onClick={() => navigate("/cart")}
@@ -393,7 +446,7 @@ export function HomeScreenNext() {
                 <div className="h-[calc(100vh-340px)] min-h-[420px]">
                   <ShopMap
                     shops={filteredShops}
-                    onShopClick={(id) => navigate(`/shop/${id}`)}
+                    onShopClick={(shop) => navigate(getShopHref(shop))}
                     center={mapCenter}
                     cityLabel={location.cityName}
                   />
@@ -408,7 +461,7 @@ export function HomeScreenNext() {
                 <ShopCard
                   key={shop.id}
                   {...shop}
-                  onClick={() => navigate(`/shop/${shop.id}`)}
+                  onClick={() => navigate(getShopHref(shop))}
                 />
               ))}
             </div>
@@ -450,6 +503,11 @@ export function HomeScreenNext() {
                     }
 
                     if (sponsoredAd.shopId) {
+                      const adShop = shops.find((shop) => shop.id === sponsoredAd.shopId);
+                      if (adShop) {
+                        navigate(getShopHref(adShop));
+                        return;
+                      }
                       navigate(`/shop/${sponsoredAd.shopId}`);
                     }
                   }}
@@ -467,7 +525,7 @@ export function HomeScreenNext() {
               <div className="h-56 relative">
                 <ShopMap
                   shops={filteredShops}
-                  onShopClick={(id) => navigate(`/shop/${id}`)}
+                  onShopClick={(shop) => navigate(getShopHref(shop))}
                   center={mapCenter}
                   cityLabel={location.cityName}
                 />
@@ -486,7 +544,7 @@ export function HomeScreenNext() {
                       >
                         <ShopCard
                           {...shop}
-                          onClick={() => navigate(`/shop/${shop.id}`)}
+                          onClick={() => navigate(getShopHref(shop))}
                         />
                       </div>
                     ))}
@@ -521,7 +579,7 @@ export function HomeScreenNext() {
                 <ShopCard
                   key={shop.id}
                   {...shop}
-                  onClick={() => navigate(`/shop/${shop.id}`)}
+                  onClick={() => navigate(getShopHref(shop))}
                 />
               ))}
 
@@ -569,7 +627,7 @@ export function HomeScreenNext() {
         title="Catégories"
       >
         <div className="grid grid-cols-2 gap-2">
-          {CATEGORIES.map((cat) => (
+          {CATEGORY_GROUPS_WITH_ALL.map((cat) => (
             <button
               key={cat.id}
               onClick={() => {
@@ -589,6 +647,34 @@ export function HomeScreenNext() {
                   : cat.label}
               </span>
             </button>
+          ))}
+        </div>
+        <div className="mt-4 space-y-3">
+          {CATEGORY_GROUPS.map((group) => (
+            <section key={group.id}>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">
+                {group.label}
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {group.children.map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => {
+                      setActiveCategory(cat.id);
+                      setShowCategories(false);
+                    }}
+                    className={`flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-sm text-left transition-all ${
+                      activeCategory === cat.id
+                        ? "bg-coral/10 text-coral border border-coral/30"
+                        : "bg-input-background text-foreground hover:bg-muted border border-transparent"
+                    }`}
+                  >
+                    <CategoryIcon icon={cat.icon} className="text-lg w-5 h-5" />
+                    <span className="flex-1 leading-tight">{cat.label}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       </BottomSheet>

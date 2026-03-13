@@ -1,12 +1,8 @@
 import { MapPin, Star, Clock, Truck, ShoppingBag } from "lucide-react";
 import type { Shop, Product } from "../types/catalog";
-import { CATEGORIES } from "../data/catalog";
+import { getCategoryLabel } from "../data/catalog";
 import logoImg from "../../assets/logo.png";
 import giftIcon from "../../assets/gift-icon.png";
-
-function getCategoryLabel(id: string): string {
-  return CATEGORIES.find((c) => c.id === id)?.label ?? id;
-}
 
 // Logo Component
 export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {

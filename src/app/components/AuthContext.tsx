@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { getPasswordRuleMessage } from "../utils/passwordRules";
 
 type Role = "buyer" | "seller";
 
@@ -362,6 +363,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!hasSupabaseConfig()) {
       throw new Error("Configuration Supabase manquante.");
     }
+    const passwordError = getPasswordRuleMessage(password);
+    if (passwordError) {
+      throw new Error(passwordError);
+    }
 
     const signup = await requestJson<{
       user?: { id: string };
@@ -622,6 +627,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const updatePassword: AuthContextType["updatePassword"] = async (newPassword) => {
     if (!newPassword.trim()) {
       throw new Error("Mot de passe requis.");
+    }
+    const passwordError = getPasswordRuleMessage(newPassword);
+    if (passwordError) {
+      throw new Error(passwordError);
     }
 
     await withSessionRetry((accessToken) =>

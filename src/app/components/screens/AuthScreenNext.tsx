@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Mail, Lock, Eye, EyeOff, ShoppingBag, Store, ChevronLeft } from "lucide-react";
 import { Button, Input, Logo, Header } from "../ds";
 import { useAuth } from "../AuthContext";
+import { getPasswordRuleMessage } from "../../utils/passwordRules";
 
 function GoogleIcon({ className = "w-5 h-5" }: { className?: string }) {
   return (
@@ -290,6 +291,11 @@ export function AuthScreenNext() {
       setErrorMessage(null);
       try {
         if (mode === "signup") {
+          const passwordError = getPasswordRuleMessage(password);
+          if (passwordError) {
+            setErrorMessage(passwordError);
+            return;
+          }
           await signUp({
             email: email.trim(),
             password,
@@ -341,6 +347,8 @@ export function AuthScreenNext() {
   };
 
   const isFormInvalid = !email.trim() || !password.trim() || (mode === "signup" && (!firstName.trim() || !lastName.trim()));
+  const passwordRuleMessage = mode === "signup" ? getPasswordRuleMessage(password) : null;
+  const isSignupPasswordInvalid = mode === "signup" && Boolean(passwordRuleMessage);
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -432,10 +440,14 @@ export function AuthScreenNext() {
           className="mt-6"
           variant={role === "seller" ? "accent" : "primary"}
           onClick={handleAuth}
-          disabled={isSubmitting || isLoading || isFormInvalid}
+          disabled={isSubmitting || isLoading || isFormInvalid || isSignupPasswordInvalid}
         >
           {isSubmitting ? "Chargement..." : mode === "login" ? "Se connecter" : "S'inscrire"}
         </Button>
+
+        {mode === "signup" && passwordRuleMessage && (
+          <p className="text-xs text-destructive mt-2 text-center">{passwordRuleMessage}</p>
+        )}
 
         {errorMessage && (
           <p className="text-sm text-destructive mt-3 text-center">{errorMessage}</p>

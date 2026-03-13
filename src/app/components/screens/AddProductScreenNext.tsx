@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { Button, Input, Badge, Header, Chip, CategoryIcon } from "../ds";
-import { CATEGORIES } from "../../data/catalog";
+import { CATEGORY_GROUPS } from "../../data/catalog";
 import { useAuth } from "../AuthContext";
 import { createSellerProduct } from "../../services/sellerProducts";
 
@@ -20,7 +20,7 @@ export function AddProductScreenNext() {
   const push = (path: string) => router.push(path);
   const { user, isAuthenticated, accessToken } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [published, setPublished] = useState(false);
+  const [saveResult, setSaveResult] = useState<"published" | "draft" | null>(null);
   const [photos, setPhotos] = useState<string[]>([]);
   const [mainPhotoIndex, setMainPhotoIndex] = useState(0);
   const [title, setTitle] = useState("");
@@ -86,18 +86,22 @@ export function AddProductScreenNext() {
     ));
   };
 
-  const validateForm = () => {
+  const validateForm = (target: "published" | "draft") => {
     const errors: string[] = [];
     const parsedPrice = Number(price.replace(",", "."));
     const parsedStock = Number(stock);
 
-    if (photos.length < 1) errors.push("Ajoutez au moins 1 photo.");
-    if (title.trim().length < 3) errors.push("Le titre doit contenir au moins 3 caracteres.");
-    if (description.trim().length < 20) errors.push("La description doit contenir au moins 20 caracteres.");
-    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) errors.push("Le prix doit etre superieur a 0.");
-    if (!Number.isInteger(parsedStock) || parsedStock < 1) errors.push("Le stock doit etre un entier superieur ou egal a 1.");
-    if (categories.length < 1) errors.push("Selectionnez au moins 1 categorie.");
-    if (!pickup && !delivery) errors.push("Activez au moins un mode de remise (retrait ou livraison).");
+    if (target === "published") {
+      if (photos.length < 1) errors.push("Ajoutez au moins 1 photo.");
+      if (title.trim().length < 3) errors.push("Le titre doit contenir au moins 3 caracteres.");
+      if (description.trim().length < 20) errors.push("La description doit contenir au moins 20 caracteres.");
+      if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) errors.push("Le prix doit etre superieur a 0.");
+      if (!Number.isInteger(parsedStock) || parsedStock < 1) errors.push("Le stock doit etre un entier superieur ou egal a 1.");
+      if (categories.length < 1) errors.push("Selectionnez au moins 1 categorie.");
+      if (!pickup && !delivery) errors.push("Activez au moins un mode de remise (retrait ou livraison).");
+    } else {
+      if (!title.trim()) errors.push("Ajoutez au moins un titre pour le brouillon.");
+    }
 
     setValidationErrors(errors);
     return errors.length === 0;
@@ -119,7 +123,7 @@ export function AddProductScreenNext() {
 
   const isBusinessDeactivated = Boolean(user?.sellerDeactivated);
 
-  if (published) {
+  if (saveResult) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background px-6">
         <motion.div
@@ -130,17 +134,18 @@ export function AddProductScreenNext() {
         >
           <Check className="w-10 h-10 text-green" />
         </motion.div>
-        <h1 className="mb-2">Produit publié !</h1>
+        <h1 className="mb-2">{saveResult === "published" ? "Produit publié !" : "Brouillon enregistré !"}</h1>
         <p className="text-muted-foreground text-center text-sm mb-8 max-w-sm">
-          Votre produit est maintenant visible par les acheteurs à proximité.
-          Vous recevrez une notification à chaque commande.
+          {saveResult === "published"
+            ? "Votre produit est maintenant visible sur la home pour les acheteurs."
+            : "Votre produit est enregistré en brouillon. Il ne sera pas visible tant qu'il n'est pas publié."}
         </p>
         <div className="flex flex-col gap-3 w-full max-w-sm">
           <Button fullWidth variant="accent" onClick={() => push("/dashboard")}>
             Retour au tableau de bord
           </Button>
           <Button fullWidth variant="outline" onClick={() => {
-            setPublished(false);
+            setSaveResult(null);
             setTitle("");
             setPrice("");
             setDescription("");
@@ -148,6 +153,9 @@ export function AddProductScreenNext() {
             setMainPhotoIndex(0);
             setCategories([]);
             setValidationErrors([]);
+            setStock("5");
+            setPickup(true);
+            setDelivery(false);
           }}>
             Ajouter un autre produit
           </Button>
@@ -155,6 +163,53 @@ export function AddProductScreenNext() {
       </div>
     );
   }
+
+  const submitProduct = (target: "published" | "draft") => {
+    const run = async () => {
+      if (!validateForm(target)) return;
+      if (!user?.id || !accessToken) {
+        setValidationErrors(["Session invalide. Merci de vous reconnecter."]);
+        return;
+      }
+
+      setIsPublishing(true);
+      setValidationErrors([]);
+      try {
+        const normalizedMainPhotoIndex = Math.min(mainPhotoIndex, Math.max(0, photos.length - 1));
+        const mainImageUrl = photos[normalizedMainPhotoIndex];
+        await createSellerProduct({
+          userId: user.id,
+          accessToken,
+          title: title.trim() || "Produit brouillon",
+          description: description.trim(),
+          price: target === "published" ? Number(price.replace(",", ".")) : Math.max(0, Number(price.replace(",", ".")) || 0),
+          stock: target === "published" ? Number(stock) : Math.max(0, Number(stock) || 0),
+          categories,
+          pickup,
+          delivery,
+          isPublished: target === "published",
+          mainImageUrl,
+          imageUrls: photos,
+        });
+        setSaveResult(target);
+      } catch (error) {
+        const rawMessage = error instanceof Error ? error.message : "Impossible de publier le produit.";
+        const message = rawMessage.includes("products_main_image_required_if_published")
+          ? "Choisissez une image principale valide."
+          : rawMessage.includes("schema cache") || rawMessage.includes("column")
+            ? "Base de données pas à jour. Lancez les migrations Supabase puis réessayez."
+            : rawMessage.includes("index row requires")
+              ? "Image trop lourde pour le format actuel. Réduisez la taille ou le poids de la photo."
+              : rawMessage.includes("payload too large")
+                ? "Images trop lourdes. Réduisez la taille des photos puis réessayez."
+                : rawMessage;
+        setValidationErrors([message]);
+      } finally {
+        setIsPublishing(false);
+      }
+    };
+    void run();
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -242,20 +297,29 @@ export function AddProductScreenNext() {
         {/* Category */}
         <div className="mb-4">
           <label className="text-sm mb-2 block">Catégorie</label>
-          <div className="flex flex-wrap gap-2">
-            {CATEGORIES.filter((c) => c.id !== "all").map((cat) => (
-              <Chip
-                key={cat.id}
-                active={categories.includes(cat.id)}
-                onClick={() => toggleCategory(cat.id)}
-                icon={<CategoryIcon icon={cat.icon} className="text-sm w-4 h-4" />}
-              >
-                {cat.label}
-              </Chip>
+          <div className="space-y-3">
+            {CATEGORY_GROUPS.map((group) => (
+              <section key={group.id}>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">
+                  {group.label}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {group.children.map((cat) => (
+                    <Chip
+                      key={cat.id}
+                      active={categories.includes(cat.id)}
+                      onClick={() => toggleCategory(cat.id)}
+                      icon={<CategoryIcon icon={cat.icon} className="text-sm w-4 h-4" />}
+                    >
+                      {cat.label}
+                    </Chip>
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            Vous pouvez selectionner plusieurs categories.
+            Vous pouvez selectionner plusieurs sous-categories.
           </p>
         </div>
 
@@ -337,56 +401,20 @@ export function AddProductScreenNext() {
 
         {/* Submit */}
         <div className="flex gap-3 pb-8">
-          <Button fullWidth variant="outline" size="lg">
+          <Button
+            fullWidth
+            variant="outline"
+            size="lg"
+            onClick={() => submitProduct("draft")}
+            disabled={isBusinessDeactivated || isPublishing}
+          >
             Brouillon
           </Button>
           <Button
             fullWidth
             variant="accent"
             size="lg"
-            onClick={() => {
-              const run = async () => {
-                if (!validateForm()) return;
-                if (!user?.id || !accessToken) {
-                  setValidationErrors(["Session invalide. Merci de vous reconnecter."]);
-                  return;
-                }
-
-                setIsPublishing(true);
-                setValidationErrors([]);
-                try {
-                  const normalizedMainPhotoIndex = Math.min(mainPhotoIndex, Math.max(0, photos.length - 1));
-                  const mainImageUrl = photos[normalizedMainPhotoIndex];
-                  await createSellerProduct({
-                    userId: user.id,
-                    accessToken,
-                    title: title.trim(),
-                    description: description.trim(),
-                    price: Number(price.replace(",", ".")),
-                    stock: Number(stock),
-                    categories,
-                    pickup,
-                    delivery,
-                    mainImageUrl,
-                    imageUrls: photos,
-                  });
-                  setPublished(true);
-                } catch (error) {
-                  const rawMessage = error instanceof Error ? error.message : "Impossible de publier le produit.";
-                  const message = rawMessage.includes("products_main_image_required_if_published")
-                    ? "Choisissez une image principale valide."
-                    : rawMessage.includes("schema cache") || rawMessage.includes("column")
-                      ? "Base de données pas à jour. Lancez les migrations Supabase puis réessayez."
-                      : rawMessage.includes("payload too large")
-                        ? "Images trop lourdes. Réduisez la taille des photos puis réessayez."
-                        : rawMessage;
-                  setValidationErrors([message]);
-                } finally {
-                  setIsPublishing(false);
-                }
-              };
-              void run();
-            }}
+            onClick={() => submitProduct("published")}
             disabled={isBusinessDeactivated || isPublishing}
           >
             {isPublishing ? "Publication..." : "Publier"}

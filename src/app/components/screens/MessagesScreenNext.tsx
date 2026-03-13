@@ -8,6 +8,7 @@ import { useAuth } from "../AuthContext";
 import { trackLeadEvent } from "../../services/leadEvents";
 import { fetchShops } from "../../services/catalog";
 import type { Shop } from "../../types/catalog";
+import { getShopHref } from "../../utils/shopRouting";
 
 interface Message {
   id: string;
@@ -151,7 +152,7 @@ function ChatView({ shopId, onBack }: { shopId: string; onBack: () => void }) {
         right={
           shop ? (
             <button
-              onClick={() => push(`/shop/${shop.id}`)}
+              onClick={() => push(getShopHref(shop))}
               className="text-coral text-sm"
             >
               Voir boutique

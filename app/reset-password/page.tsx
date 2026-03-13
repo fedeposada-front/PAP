@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Lock } from "lucide-react";
 import { Header, Input, Button } from "../../src/app/components/ds";
 import { useAuth } from "../../src/app/components/AuthContext";
+import { getPasswordRuleMessage } from "../../src/app/utils/passwordRules";
 
 export const dynamic = "force-dynamic";
 
@@ -31,8 +32,9 @@ export default function ResetPasswordPage() {
         setErrorMessage("Les mots de passe ne correspondent pas.");
         return;
       }
-      if (password.length < 8) {
-        setErrorMessage("Le mot de passe doit contenir au moins 8 caracteres.");
+      const passwordError = getPasswordRuleMessage(password);
+      if (passwordError) {
+        setErrorMessage(passwordError);
         return;
       }
 

@@ -5,7 +5,7 @@ import type { Shop } from "../types/catalog";
 
 interface ShopMapProps {
   shops: Shop[];
-  onShopClick: (shopId: string) => void;
+  onShopClick: (shop: Shop) => void;
   className?: string;
   center?: [number, number];
   cityLabel?: string;
@@ -71,8 +71,10 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
   const markersRef = useRef<any>(null);
   const userMarkerRef = useRef<any>(null);
   const leafletRef = useRef<any>(null);
+  const shopsRef = useRef<Shop[]>(shops);
   const onShopClickRef = useRef(onShopClick);
   onShopClickRef.current = onShopClick;
+  shopsRef.current = shops;
 
   const mapCenter = center ?? CENTER;
   const centerLat = mapCenter[0];
@@ -119,7 +121,9 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
         const target = (e.target as HTMLElement).closest("[data-shop-id]") as HTMLElement | null;
         if (!target) return;
         const shopId = target.getAttribute("data-shop-id");
-        if (shopId) onShopClickRef.current(shopId);
+        if (!shopId) return;
+        const clickedShop = shopsRef.current.find((shop) => shop.id === shopId);
+        if (clickedShop) onShopClickRef.current(clickedShop);
       });
 
       setTimeout(() => map.invalidateSize(), 200);
@@ -168,9 +172,20 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
     markersGroup.clearLayers();
     if (shops.length === 0) return;
 
-    shops.forEach((shop) => {
-      const marker = L.marker([shop.lat, shop.lng], {
+    shops.forEach((shop, index) => {
+      if (!Number.isFinite(shop.lat) || !Number.isFinite(shop.lng)) return;
+
+      const isOverlappingUser =
+        Math.abs(shop.lat - centerLat) < 0.00012 &&
+        Math.abs(shop.lng - centerLng) < 0.00012;
+
+      // If shop and user share (almost) same coordinates, offset slightly so both markers remain visible.
+      const plottedLat = isOverlappingUser ? shop.lat + 0.00035 * (index + 1) : shop.lat;
+      const plottedLng = isOverlappingUser ? shop.lng + 0.00035 * (index + 1) : shop.lng;
+
+      const marker = L.marker([plottedLat, plottedLng], {
         icon: createShopIcon(L, shop.isOpen),
+        zIndexOffset: 1000,
       });
 
       const popupContent = `
@@ -196,7 +211,7 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
         const popupEl = marker.getPopup()?.getElement();
         const clickTarget = popupEl?.querySelector("[data-shop-id]") as HTMLElement | null;
         if (clickTarget) {
-          clickTarget.onclick = () => onShopClickRef.current(shop.id);
+          clickTarget.onclick = () => onShopClickRef.current(shop);
         }
       });
 

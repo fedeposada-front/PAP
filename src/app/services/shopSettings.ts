@@ -4,6 +4,7 @@ const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 interface ShopSettingsRow {
   id: string;
   name: string;
+  category: string;
   description: string | null;
   address: string;
   city: string;
@@ -21,6 +22,9 @@ interface ShopSettingsRow {
   delivery_carrier: boolean | null;
   logo_image_url: string | null;
   banner_image_url: string | null;
+  is_published: boolean | null;
+  lat: number | null;
+  lng: number | null;
 }
 
 interface ProfileRow {
@@ -30,6 +34,42 @@ interface ProfileRow {
 
 function hasSupabaseConfig() {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+}
+
+interface AddressFeature {
+  geometry?: {
+    coordinates?: [number, number];
+  };
+}
+
+async function geocodeShopAddress(params: {
+  address: string;
+  city?: string;
+  postalCode?: string;
+}): Promise<{ lat: number; lng: number } | null> {
+  const address = params.address.trim();
+  if (!address) return null;
+
+  const q = [address, params.postalCode?.trim(), params.city?.trim()].filter(Boolean).join(" ");
+  const query = new URLSearchParams({
+    q,
+    limit: "1",
+  });
+  if (params.city?.trim()) query.set("city", params.city.trim());
+  if (params.postalCode?.trim()) query.set("postcode", params.postalCode.trim());
+
+  try {
+    const response = await fetch(`https://api-adresse.data.gouv.fr/search/?${query.toString()}`);
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { features?: AddressFeature[] };
+    const coords = payload.features?.[0]?.geometry?.coordinates;
+    if (!coords || coords.length < 2) return null;
+    const [lng, lat] = coords;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  } catch {
+    return null;
+  }
 }
 
 async function requestSupabase<T>(path: string, init: RequestInit, accessToken: string): Promise<T> {
@@ -57,7 +97,7 @@ async function requestSupabase<T>(path: string, init: RequestInit, accessToken: 
 
 async function getOrCreateShop(userId: string, accessToken: string): Promise<ShopSettingsRow> {
   const existing = await requestSupabase<ShopSettingsRow[]>(
-    `shops?owner_user_id=eq.${userId}&select=id,name,description,address,city,postal_code,phone,email,website,hours,opening_hours,open_holidays,delivery,pickup_today,delivery_hand,delivery_post,delivery_carrier,logo_image_url,banner_image_url&order=created_at.asc&limit=1`,
+    `shops?owner_user_id=eq.${userId}&select=id,name,category,description,address,city,postal_code,phone,email,website,hours,opening_hours,open_holidays,delivery,pickup_today,delivery_hand,delivery_post,delivery_carrier,logo_image_url,banner_image_url,is_published,lat,lng&order=created_at.asc&limit=1`,
     { method: "GET" },
     accessToken
   );
@@ -69,6 +109,11 @@ async function getOrCreateShop(userId: string, accessToken: string): Promise<Sho
     accessToken
   );
   const profile = profileRows[0];
+  const initialAddress = profile?.shop_address?.trim() || "";
+  const coords = await geocodeShopAddress({
+    address: initialAddress,
+    city: "Amiens",
+  });
 
   const inserted = await requestSupabase<ShopSettingsRow[]>(
     "shops",
@@ -78,10 +123,13 @@ async function getOrCreateShop(userId: string, accessToken: string): Promise<Sho
       body: JSON.stringify([{
         owner_user_id: userId,
         name: profile?.shop_name?.trim() || "Ma boutique",
-        category: "artisanat",
+        category: "Non catégorisé",
         description: "",
-        address: profile?.shop_address?.trim() || "Adresse a renseigner",
+        address: initialAddress || "Adresse a renseigner",
         city: "Amiens",
+        lat: coords?.lat ?? null,
+        lng: coords?.lng ?? null,
+        is_published: false,
       }]),
     },
     accessToken
@@ -102,6 +150,7 @@ export async function saveShopSettings(params: {
   userId: string;
   accessToken: string;
   shopName: string;
+  shopCategory: string;
   shopDesc: string;
   shopAddress: string;
   shopCity: string;
@@ -118,12 +167,18 @@ export async function saveShopSettings(params: {
   deliveryCarrier: boolean;
   logoImage: string | null;
   bannerImage: string | null;
+  isPublished: boolean;
 }): Promise<ShopSettingsRow> {
   if (!hasSupabaseConfig()) {
     throw new Error("Configuration Supabase manquante.");
   }
 
   const shop = await getOrCreateShop(params.userId, params.accessToken);
+  const coords = await geocodeShopAddress({
+    address: params.shopAddress,
+    city: params.shopCity,
+    postalCode: params.shopPostal,
+  });
 
   await requestSupabase(
     `shops?id=eq.${shop.id}`,
@@ -132,6 +187,7 @@ export async function saveShopSettings(params: {
       headers: { Prefer: "return=minimal" },
       body: JSON.stringify({
         name: params.shopName,
+        category: params.shopCategory,
         description: params.shopDesc || null,
         address: params.shopAddress,
         city: params.shopCity,
@@ -148,6 +204,9 @@ export async function saveShopSettings(params: {
         delivery_carrier: params.delivery && params.deliveryCarrier,
         logo_image_url: params.logoImage,
         banner_image_url: params.bannerImage,
+        lat: coords?.lat ?? null,
+        lng: coords?.lng ?? null,
+        is_published: params.isPublished,
       }),
     },
     params.accessToken
@@ -167,7 +226,7 @@ export async function saveShopSettings(params: {
   );
 
   const refreshed = await requestSupabase<ShopSettingsRow[]>(
-    `shops?owner_user_id=eq.${params.userId}&select=id,name,description,address,city,postal_code,phone,email,website,hours,opening_hours,open_holidays,delivery,pickup_today,delivery_hand,delivery_post,delivery_carrier,logo_image_url,banner_image_url&order=created_at.asc&limit=1`,
+    `shops?owner_user_id=eq.${params.userId}&select=id,name,category,description,address,city,postal_code,phone,email,website,hours,opening_hours,open_holidays,delivery,pickup_today,delivery_hand,delivery_post,delivery_carrier,logo_image_url,banner_image_url,is_published,lat,lng&order=created_at.asc&limit=1`,
     { method: "GET" },
     params.accessToken
   );

@@ -12,6 +12,8 @@ import {
   type FavoriteProductItem,
   type FollowedShopItem,
 } from "../../services/buyerCollections";
+import { getShopHref } from "../../utils/shopRouting";
+import { getCategoryLabel } from "../../data/catalog";
 
 const BUYER_PROFILE_STORAGE_KEY = "mcl_buyer_profile_v1";
 
@@ -245,7 +247,7 @@ export function BuyerProfileScreenNext() {
                     {product.shopName} · {product.price.toFixed(2)} €
                   </p>
                 </div>
-                <Badge variant="coral">{product.category}</Badge>
+                <Badge variant="coral">{getCategoryLabel(product.category)}</Badge>
               </button>
             ))}
           </div>
@@ -266,12 +268,12 @@ export function BuyerProfileScreenNext() {
             {followedShops.map((shop) => (
               <button
                 key={shop.id}
-                onClick={() => push(`/shop/${shop.id}`)}
+                onClick={() => push(getShopHref(shop))}
                 className="w-full flex items-center justify-between rounded-xl bg-muted/40 px-3 py-2.5 hover:bg-muted/70 transition-colors text-left"
               >
                 <div className="min-w-0">
                   <p className="truncate">{shop.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{shop.category}</p>
+                  <p className="text-xs text-muted-foreground truncate">{getCategoryLabel(shop.category)}</p>
                 </div>
                 <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
               </button>

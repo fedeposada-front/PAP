@@ -30,6 +30,8 @@ interface ProductRow {
   pickup: boolean;
   delivery: boolean;
   created_at: string;
+  is_published: boolean;
+  sold_count: number | null;
 }
 
 interface RequestOptions {
@@ -68,13 +70,17 @@ async function requestSupabase<T>(path: string, init: RequestInit, options: Requ
 }
 
 function mapProduct(row: ProductRow, shopName: string): Product {
+  const soldCount = Number(row.sold_count ?? 0);
+  const status: Product["status"] =
+    row.is_published ? "published" : soldCount > 0 ? "disabled" : "draft";
+
   return {
     id: row.id,
     shopId: row.shop_id,
     shopName,
     title: row.title,
     price: Number(row.price),
-    image: row.main_image_url ?? row.image_url ?? FALLBACK_IMAGE,
+    image: row.image_url ?? row.main_image_url ?? FALLBACK_IMAGE,
     category: row.categories?.[0] ?? row.category,
     availableToday: row.available_today,
     stock: row.stock,
@@ -82,6 +88,9 @@ function mapProduct(row: ProductRow, shopName: string): Product {
     pickup: row.pickup,
     delivery: row.delivery,
     addedAt: row.created_at,
+    isPublished: row.is_published,
+    soldCount,
+    status,
   };
 }
 
@@ -145,7 +154,7 @@ export async function fetchSellerProducts(params: {
   const shopIds = shops.map((shop) => shop.id);
   const encodedIds = encodeInList(shopIds);
   const productRows = await requestSupabase<ProductRow[]>(
-    `products?shop_id=in.(${encodedIds})&select=id,shop_id,title,description,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at&order=created_at.desc`,
+    `products?shop_id=in.(${encodedIds})&select=id,shop_id,title,description,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count&order=created_at.desc`,
     { method: "GET" },
     { accessToken: params.accessToken }
   );
@@ -164,6 +173,7 @@ export async function createSellerProduct(params: {
   categories: string[];
   pickup: boolean;
   delivery: boolean;
+  isPublished: boolean;
   mainImageUrl?: string;
   imageUrls?: string[];
 }): Promise<void> {
@@ -177,6 +187,10 @@ export async function createSellerProduct(params: {
     .map((url) => url.trim())
     .filter(Boolean);
   const mainImage = params.mainImageUrl?.trim() || normalizedImageUrls[0] || null;
+  const mainImageForIndexedColumn =
+    mainImage && mainImage.startsWith("data:")
+      ? FALLBACK_IMAGE
+      : mainImage;
   const normalizedCategories = params.categories.filter(Boolean);
 
   const legacyPayload = {
@@ -190,12 +204,13 @@ export async function createSellerProduct(params: {
     stock: params.stock,
     pickup: params.pickup,
     delivery: params.delivery,
-    is_published: true,
+    is_published: params.isPublished,
+    sold_count: 0,
   };
 
   const modernPayload = {
     ...legacyPayload,
-    main_image_url: mainImage,
+    main_image_url: mainImageForIndexedColumn,
     image_urls: normalizedImageUrls.length > 0 ? normalizedImageUrls : (mainImage ? [mainImage] : []),
     categories: normalizedCategories.length > 0 ? normalizedCategories : ["artisanat"],
   };
@@ -229,4 +244,54 @@ export async function createSellerProduct(params: {
       { accessToken: params.accessToken }
     );
   }
+}
+
+export async function deleteSellerProduct(params: {
+  productId: string;
+  accessToken: string;
+}): Promise<void> {
+  if (!hasSupabaseConfig()) {
+    throw new Error("Configuration Supabase manquante.");
+  }
+
+  const rows = await requestSupabase<Array<{ sold_count: number | null }>>(
+    `products?id=eq.${params.productId}&select=sold_count&limit=1`,
+    { method: "GET" },
+    { accessToken: params.accessToken }
+  );
+  const soldCount = Number(rows[0]?.sold_count ?? 0);
+  if (soldCount > 0) {
+    throw new Error("Produit déjà vendu: suppression impossible.");
+  }
+
+  await requestSupabase(
+    `products?id=eq.${params.productId}`,
+    {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+    },
+    { accessToken: params.accessToken }
+  );
+}
+
+export async function updateSellerProductPublishStatus(params: {
+  productId: string;
+  accessToken: string;
+  isPublished: boolean;
+}): Promise<void> {
+  if (!hasSupabaseConfig()) {
+    throw new Error("Configuration Supabase manquante.");
+  }
+
+  await requestSupabase(
+    `products?id=eq.${params.productId}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        is_published: params.isPublished,
+      }),
+    },
+    { accessToken: params.accessToken }
+  );
 }

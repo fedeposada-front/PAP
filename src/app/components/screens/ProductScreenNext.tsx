@@ -20,6 +20,7 @@ import { useAuth } from "../AuthContext";
 import { trackLeadEvent } from "../../services/leadEvents";
 import { fetchProducts, fetchShops } from "../../services/catalog";
 import type { Product, Shop } from "../../types/catalog";
+import { getShopHref } from "../../utils/shopRouting";
 
 export function ProductScreenNext() {
   const params = useParams<{ id: string }>();
@@ -75,7 +76,7 @@ export function ProductScreenNext() {
     <div className="min-h-screen flex flex-col bg-background pb-16">
       {/* Desktop layout */}
       <header className="hidden lg:flex items-center justify-between px-8 py-3 bg-white border-b border-border">
-        <Logo size="lg" />
+        <Logo size="lg" href="/home" />
         <div className="flex items-center gap-3">
           <Button size="sm" variant="outline" onClick={() => push("/home")}>
             Explorer
@@ -190,7 +191,14 @@ export function ProductScreenNext() {
           {/* Title + Price */}
           <div className="px-4 lg:px-0 pt-4 lg:pt-0">
             <button
-              onClick={() => push(`/shop/${product.shopId}`)}
+              onClick={() =>
+                push(
+                  getShopHref({
+                    id: product.shopId,
+                    name: product.shopName,
+                  })
+                )
+              }
               className="text-sm text-coral flex items-center gap-1 mb-1"
             >
               <Store className="w-3.5 h-3.5" />
@@ -234,7 +242,7 @@ export function ProductScreenNext() {
           {/* Shop info card */}
           {shop && (
             <div
-              onClick={() => push(`/shop/${shop.id}`)}
+              onClick={() => push(getShopHref(shop))}
               className="mx-4 lg:mx-0 bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-4 cursor-pointer hover:shadow-md transition-shadow"
             >
               <div className="flex items-center gap-3">
