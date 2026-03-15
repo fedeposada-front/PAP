@@ -3,8 +3,9 @@
 import { Button, StatCard, Logo } from "../ds";
 import { useAuth } from "../AuthContext";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
+  Copy,
   Plus,
   Eye,
   MessageCircle,
@@ -19,16 +20,19 @@ import {
 import { getLeadStats } from "../../services/leadEvents";
 import {
   deleteSellerProduct,
+  duplicateSellerProduct,
   fetchSellerProducts,
   updateSellerProductPublishStatus,
 } from "../../services/sellerProducts";
-import type { Product } from "../../types/catalog";
+import type { Product, ShopTeamMember } from "../../types/catalog";
 import { getShopHref } from "../../utils/shopRouting";
+import { fetchShopSettings, saveShopTeamMembers } from "../../services/shopSettings";
 import {
   createSellerShopNews,
   deleteSellerShopNews,
   fetchSellerShopNews,
   type ShopNewsItem,
+  updateSellerShopNews,
   updateSellerShopNewsPublishStatus,
 } from "../../services/shopNews";
 
@@ -47,8 +51,19 @@ export function DashboardScreenNext() {
   const [newsTitle, setNewsTitle] = useState("");
   const [newsDescription, setNewsDescription] = useState("");
   const [newsImageUrl, setNewsImageUrl] = useState("");
+  const [editingNewsId, setEditingNewsId] = useState<string | null>(null);
+  const newsFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [teamMembers, setTeamMembers] = useState<ShopTeamMember[]>([]);
+  const [isSavingTeam, setIsSavingTeam] = useState(false);
+  const [teamMessage, setTeamMessage] = useState<string | null>(null);
+  const [shopPublished, setShopPublished] = useState(false);
   const fullName = `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim();
   const displayName = user?.shopName || fullName || "Votre boutique";
+  const publicShopHref = getShopHref({
+    id: user?.id ?? "seller",
+    name: displayName,
+  });
+  const previewShopHref = `${publicShopHref}?preview=1`;
 
   const leadStats = useMemo(
     () => getLeadStats({ shopId: user?.id ?? "seller", sinceDays: 30 }),
@@ -72,13 +87,17 @@ export function DashboardScreenNext() {
     setIsLoadingProducts(true);
     const run = async () => {
       try {
+        setProductActionMessage(null);
         const nextProducts = await fetchSellerProducts({
           userId: user.id,
           accessToken,
         });
         if (!cancelled) setProducts(nextProducts);
-      } catch {
-        if (!cancelled) setProducts([]);
+      } catch (error) {
+        if (!cancelled) {
+          setProducts([]);
+          setProductActionMessage(error instanceof Error ? error.message : "Impossible de charger les produits.");
+        }
       } finally {
         if (!cancelled) setIsLoadingProducts(false);
       }
@@ -116,13 +135,38 @@ export function DashboardScreenNext() {
     };
   }, [user?.id, user?.siretVerified, accessToken]);
 
+  useEffect(() => {
+    if (!user?.id || !accessToken || !user?.siretVerified) {
+      setTeamMembers([]);
+      setShopPublished(false);
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const shop = await fetchShopSettings(user.id, accessToken);
+        if (!cancelled) {
+          setTeamMembers(shop?.teamMembers ?? []);
+          setShopPublished(Boolean(shop?.is_published));
+        }
+      } catch {
+        if (!cancelled) {
+          setTeamMembers([]);
+          setShopPublished(false);
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.siretVerified, accessToken]);
+
   if (!user || !user.siretVerified) {
     return null;
   }
 
-  const sellerShopPath = products.length > 0
-    ? getShopHref({ id: products[0].shopId, name: displayName })
-    : "/settings";
+  const sellerShopPath = shopPublished ? publicShopHref : previewShopHref;
 
   const refreshProducts = async () => {
     if (!user?.id || !accessToken) return;
@@ -195,6 +239,49 @@ export function DashboardScreenNext() {
     void run();
   };
 
+  const handleDuplicateProduct = (product: Product) => {
+    const run = async () => {
+      if (!user?.id || !accessToken) return;
+      const suggestedColor = product.color?.trim() || "";
+      const nextColor = typeof window !== "undefined"
+        ? window.prompt("Nouvelle couleur pour la copie du produit :", suggestedColor)
+        : null;
+      if (nextColor === null) return;
+      if (!nextColor.trim()) {
+        setProductActionMessage("Duplication annulée: couleur requise.");
+        return;
+      }
+
+      setActingProductId(product.id);
+      setProductActionMessage(null);
+      try {
+        await duplicateSellerProduct({
+          userId: user.id,
+          accessToken,
+          product,
+          color: nextColor,
+        });
+        await refreshProducts();
+        setProductActionMessage("Produit dupliqué.");
+      } catch (error) {
+        setProductActionMessage(error instanceof Error ? error.message : "Duplication impossible.");
+      } finally {
+        setActingProductId(null);
+      }
+    };
+    void run();
+  };
+
+  const resetNewsForm = () => {
+    setNewsTitle("");
+    setNewsDescription("");
+    setNewsImageUrl("");
+    setEditingNewsId(null);
+    if (newsFileInputRef.current) {
+      newsFileInputRef.current.value = "";
+    }
+  };
+
   const handleCreateNews = () => {
     const run = async () => {
       if (!user?.id || !accessToken) return;
@@ -209,31 +296,59 @@ export function DashboardScreenNext() {
         setNewsActionMessage("Description actualité requise.");
         return;
       }
-      if (imageUrl && !/^https?:\/\//i.test(imageUrl)) {
-        setNewsActionMessage("Image: utilisez une URL http(s).");
-        return;
-      }
-
       setNewsActionMessage(null);
       try {
-        await createSellerShopNews({
-          userId: user.id,
-          accessToken,
-          title,
-          description,
-          imageUrl,
-          isPublished: true,
-        });
-        setNewsTitle("");
-        setNewsDescription("");
-        setNewsImageUrl("");
+        if (editingNewsId) {
+          await updateSellerShopNews({
+            newsId: editingNewsId,
+            accessToken,
+            title,
+            description,
+            imageUrl,
+          });
+        } else {
+          await createSellerShopNews({
+            userId: user.id,
+            accessToken,
+            title,
+            description,
+            imageUrl,
+            isPublished: true,
+          });
+        }
+        resetNewsForm();
         await refreshNews();
-        setNewsActionMessage("Actualité publiée.");
+        setNewsActionMessage(editingNewsId ? "Actualité modifiée." : "Actualité publiée.");
       } catch (error) {
-        setNewsActionMessage(error instanceof Error ? error.message : "Impossible d'ajouter l'actualité.");
+        setNewsActionMessage(
+          error instanceof Error
+            ? error.message
+            : editingNewsId
+              ? "Impossible de modifier l'actualité."
+              : "Impossible d'ajouter l'actualité."
+        );
       }
     };
     void run();
+  };
+
+  const handleNewsImageUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setNewsActionMessage("Selectionnez un fichier image.");
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setNewsImageUrl(reader.result);
+        setNewsActionMessage(null);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleDeleteNews = (item: ShopNewsItem) => {
@@ -247,12 +362,95 @@ export function DashboardScreenNext() {
       setNewsActionMessage(null);
       try {
         await deleteSellerShopNews({ newsId: item.id, accessToken });
+        if (editingNewsId === item.id) {
+          resetNewsForm();
+        }
         await refreshNews();
         setNewsActionMessage("Actualité supprimée.");
       } catch (error) {
         setNewsActionMessage(error instanceof Error ? error.message : "Suppression impossible.");
       } finally {
         setActingNewsId(null);
+      }
+    };
+    void run();
+  };
+
+  const handleEditNews = (item: ShopNewsItem) => {
+    setEditingNewsId(item.id);
+    setNewsTitle(item.title);
+    setNewsDescription(item.description);
+    setNewsImageUrl(item.imageUrl);
+    setNewsActionMessage("Mode modification actif.");
+  };
+
+  const handleAddTeamMember = () => {
+    setTeamMembers((prev) => [...prev, { name: "", role: "", imageUrl: "" }]);
+    setTeamMessage(null);
+  };
+
+  const handleUpdateTeamMember = (index: number, patch: Partial<ShopTeamMember>) => {
+    setTeamMembers((prev) =>
+      prev.map((member, memberIndex) =>
+        memberIndex === index ? { ...member, ...patch } : member
+      )
+    );
+    setTeamMessage(null);
+  };
+
+  const handleRemoveTeamMember = (index: number) => {
+    setTeamMembers((prev) => prev.filter((_, memberIndex) => memberIndex !== index));
+    setTeamMessage(null);
+  };
+
+  const handleTeamImageUpload = (event: ChangeEvent<HTMLInputElement>, index: number) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setTeamMessage("Selectionnez une image pour le membre de l'equipe.");
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        handleUpdateTeamMember(index, { imageUrl: reader.result });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveTeam = () => {
+    const run = async () => {
+      if (!user?.id || !accessToken) return;
+      const normalizedTeamMembers = teamMembers
+        .map((member) => ({
+          name: member.name.trim(),
+          role: member.role?.trim() || "",
+          imageUrl: member.imageUrl?.trim() || "",
+        }))
+        .filter((member) => member.name);
+
+      if (normalizedTeamMembers.length === 0) {
+        setTeamMessage("Ajoutez au moins une personne dans l'equipe.");
+        return;
+      }
+
+      setIsSavingTeam(true);
+      setTeamMessage(null);
+      try {
+        await saveShopTeamMembers({
+          userId: user.id,
+          accessToken,
+          teamMembers: normalizedTeamMembers,
+        });
+        setTeamMembers(normalizedTeamMembers);
+        setTeamMessage("Equipe enregistree.");
+      } catch (error) {
+        setTeamMessage(error instanceof Error ? error.message : "Impossible d'enregistrer l'equipe.");
+      } finally {
+        setIsSavingTeam(false);
       }
     };
     void run();
@@ -297,7 +495,7 @@ export function DashboardScreenNext() {
               Parametres
             </button>
             <button
-              onClick={() => push("/settings")}
+              onClick={() => push(publicShopHref)}
               className="h-9 px-3 rounded-full bg-green-light inline-flex items-center gap-1.5 max-w-[220px] hover:bg-green-light/80 transition-colors"
               title={displayName}
             >
@@ -355,6 +553,11 @@ export function DashboardScreenNext() {
               Ajouter
             </Button>
           </div>
+          {!shopPublished && (
+            <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Vos produits ne seront visibles qu'après publication de la boutique.
+            </div>
+          )}
           {isLoadingProducts && (
             <p className="text-sm text-muted-foreground">Chargement...</p>
           )}
@@ -400,6 +603,14 @@ export function DashboardScreenNext() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleDuplicateProduct(product)}
+                        disabled={actingProductId === product.id}
+                        className="w-8 h-8 rounded-md bg-white border border-border hover:bg-muted disabled:opacity-50 flex items-center justify-center"
+                        title="Dupliquer"
+                      >
+                        <Copy className="w-4 h-4 text-muted-foreground" />
+                      </button>
                       <button
                         onClick={() => push(`/product/${product.id}`)}
                         className="w-8 h-8 rounded-md bg-white border border-border hover:bg-muted flex items-center justify-center"
@@ -448,15 +659,43 @@ export function DashboardScreenNext() {
               className="bg-input-background rounded-xl px-3 py-2 text-sm outline-none"
             />
             <input
-              value={newsImageUrl}
-              onChange={(e) => setNewsImageUrl(e.target.value)}
-              placeholder="URL image https://..."
-              className="bg-input-background rounded-xl px-3 py-2 text-sm outline-none"
+              ref={newsFileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleNewsImageUpload}
             />
+            <button
+              type="button"
+              onClick={() => newsFileInputRef.current?.click()}
+              className="bg-input-background rounded-xl px-3 py-2 text-sm outline-none text-left hover:bg-muted transition-colors"
+            >
+              {newsImageUrl ? "Image selectionnee" : "Ouvrir un fichier image"}
+            </button>
             <Button size="sm" onClick={handleCreateNews}>
-              Publier une actualité
+              {editingNewsId ? "Enregistrer" : "Publier une actualité"}
             </Button>
           </div>
+          {editingNewsId && (
+            <div className="mb-3">
+              <button
+                type="button"
+                onClick={resetNewsForm}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Annuler la modification
+              </button>
+            </div>
+          )}
+          {newsImageUrl && (
+            <div className="mb-3">
+              <img
+                src={newsImageUrl}
+                alt="Apercu actualite"
+                className="w-20 h-20 rounded-xl object-cover border border-border bg-white"
+              />
+            </div>
+          )}
           <textarea
             value={newsDescription}
             onChange={(e) => setNewsDescription(e.target.value)}
@@ -498,6 +737,14 @@ export function DashboardScreenNext() {
                     </div>
                     <div className="flex items-center gap-1">
                       <button
+                        onClick={() => handleEditNews(item)}
+                        disabled={actingNewsId === item.id}
+                        className="w-8 h-8 rounded-md bg-white border border-border hover:bg-muted disabled:opacity-50 flex items-center justify-center"
+                        title="Modifier"
+                      >
+                        <Pencil className="w-4 h-4 text-muted-foreground" />
+                      </button>
+                      <button
                         onClick={() => handleTogglePublishNews(item)}
                         disabled={actingNewsId === item.id}
                         className="w-8 h-8 rounded-md bg-white border border-border hover:bg-muted disabled:opacity-50 flex items-center justify-center"
@@ -523,6 +770,74 @@ export function DashboardScreenNext() {
           {newsActionMessage && (
             <p className="text-sm text-muted-foreground mt-3">{newsActionMessage}</p>
           )}
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h4>Équipe de la boutique</h4>
+            <Button size="sm" variant="outline" onClick={handleAddTeamMember}>
+              Ajouter
+            </Button>
+          </div>
+
+          {teamMembers.length === 0 && (
+            <p className="text-sm text-muted-foreground mb-3">
+              Ajoutez les personnes qui représentent votre boutique.
+            </p>
+          )}
+
+          <div className="space-y-3">
+            {teamMembers.map((member, index) => (
+              <div key={index} className="rounded-xl bg-muted/40 p-3">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <label className="relative w-16 h-16 rounded-2xl overflow-hidden border border-border bg-white cursor-pointer flex items-center justify-center">
+                    {member.imageUrl ? (
+                      <img src={member.imageUrl} alt={member.name || "Membre"} className="w-full h-full object-cover" />
+                    ) : (
+                      <Store className="w-5 h-5 text-muted-foreground" />
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(event) => handleTeamImageUpload(event, index)}
+                    />
+                  </label>
+
+                  <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <input
+                      value={member.name}
+                      onChange={(event) => handleUpdateTeamMember(index, { name: event.target.value })}
+                      placeholder="Nom"
+                      className="bg-input-background rounded-xl px-3 py-2 text-sm outline-none"
+                    />
+                    <input
+                      value={member.role ?? ""}
+                      onChange={(event) => handleUpdateTeamMember(index, { role: event.target.value })}
+                      placeholder="Fonction"
+                      className="bg-input-background rounded-xl px-3 py-2 text-sm outline-none"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveTeamMember(index)}
+                    className="w-9 h-9 rounded-md bg-white border border-border hover:bg-muted flex items-center justify-center self-start"
+                    title="Supprimer"
+                  >
+                    <Trash2 className="w-4 h-4 text-destructive" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">{teamMessage}</p>
+            <Button size="sm" onClick={handleSaveTeam} disabled={isSavingTeam}>
+              {isSavingTeam ? "Enregistrement..." : "Enregistrer l'équipe"}
+            </Button>
+          </div>
         </div>
 
         <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-6">

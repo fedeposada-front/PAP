@@ -5,14 +5,15 @@ export interface CartItem {
   product: Product;
   qty: number;
   mode: "pickup" | "delivery";
+  color?: string;
 }
 
 interface CartContextType {
   items: CartItem[];
-  addItem: (product: Product, mode?: "pickup" | "delivery") => void;
-  removeItem: (productId: string) => void;
-  updateQty: (productId: string, delta: number) => void;
-  toggleMode: (productId: string) => void;
+  addItem: (product: Product, mode?: "pickup" | "delivery", color?: string) => void;
+  removeItem: (productId: string, color?: string) => void;
+  updateQty: (productId: string, delta: number, color?: string) => void;
+  toggleMode: (productId: string, color?: string) => void;
   clearCart: () => void;
   totalItems: number;
   subtotal: number;
@@ -36,27 +37,27 @@ const CartContext = createContext<CartContextType>({
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
 
-  const addItem = (product: Product, mode: "pickup" | "delivery" = "pickup") => {
+  const addItem = (product: Product, mode: "pickup" | "delivery" = "pickup", color?: string) => {
     setItems((prev) => {
-      const existing = prev.find((i) => i.product.id === product.id);
+      const existing = prev.find((i) => i.product.id === product.id && (i.color ?? "") === (color ?? ""));
       if (existing) {
         return prev.map((i) =>
-          i.product.id === product.id ? { ...i, qty: i.qty + 1 } : i
+          i.product.id === product.id && (i.color ?? "") === (color ?? "") ? { ...i, qty: i.qty + 1 } : i
         );
       }
-      return [...prev, { product, qty: 1, mode }];
+      return [...prev, { product, qty: 1, mode, color }];
     });
   };
 
-  const removeItem = (productId: string) => {
-    setItems((prev) => prev.filter((i) => i.product.id !== productId));
+  const removeItem = (productId: string, color?: string) => {
+    setItems((prev) => prev.filter((i) => !(i.product.id === productId && (i.color ?? "") === (color ?? ""))));
   };
 
-  const updateQty = (productId: string, delta: number) => {
+  const updateQty = (productId: string, delta: number, color?: string) => {
     setItems((prev) =>
       prev
         .map((i) =>
-          i.product.id === productId
+          i.product.id === productId && (i.color ?? "") === (color ?? "")
             ? { ...i, qty: Math.max(0, i.qty + delta) }
             : i
         )
@@ -64,10 +65,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
-  const toggleMode = (productId: string) => {
+  const toggleMode = (productId: string, color?: string) => {
     setItems((prev) =>
       prev.map((i) =>
-        i.product.id === productId
+        i.product.id === productId && (i.color ?? "") === (color ?? "")
           ? { ...i, mode: i.mode === "pickup" ? "delivery" : "pickup" }
           : i
       )

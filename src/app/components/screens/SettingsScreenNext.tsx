@@ -8,6 +8,7 @@ import { AddressAutocompleteInput, type AddressSuggestion } from "../AddressAuto
 import { fetchShopSettings, saveShopSettings } from "../../services/shopSettings";
 import { getPasswordRuleMessage } from "../../utils/passwordRules";
 import { CATEGORY_GROUPS } from "../../data/catalog";
+import { getShopHref } from "../../utils/shopRouting";
 import {
   Building2,
   MapPin,
@@ -80,6 +81,7 @@ export function SettingsScreenNext() {
   const [shopName, setShopName] = useState(user?.shopName ?? "");
   const [shopCategory, setShopCategory] = useState("");
   const [shopDesc, setShopDesc] = useState("");
+  const [shopStory, setShopStory] = useState("");
   const [shopAddress, setShopAddress] = useState(user?.shopAddress ?? "");
   const [shopCity, setShopCity] = useState("");
   const [shopPostal, setShopPostal] = useState("");
@@ -136,6 +138,7 @@ export function SettingsScreenNext() {
         setShopName(shop.name ?? "");
         setShopCategory(shop.category ?? "");
         setShopDesc(shop.description ?? "");
+        setShopStory(shop.story ?? "");
         setShopAddress(shop.address ?? "");
         setShopPostal(shop.postal_code ?? "");
         setShopCity(shop.city ?? "");
@@ -269,6 +272,7 @@ export function SettingsScreenNext() {
         shopName: shopName.trim(),
         shopCategory: shopCategory.trim(),
         shopDesc: shopDesc.trim(),
+        shopStory: shopStory.trim(),
         shopAddress: shopAddress.trim(),
         shopCity: shopCity.trim(),
         shopPostal: shopPostal.trim(),
@@ -289,6 +293,7 @@ export function SettingsScreenNext() {
       setShopName(persistedShop.name ?? "");
       setShopCategory(persistedShop.category ?? "");
       setShopDesc(persistedShop.description ?? "");
+      setShopStory(persistedShop.story ?? "");
       setShopAddress(persistedShop.address ?? "");
       setShopPostal(persistedShop.postal_code ?? "");
       setShopCity(persistedShop.city ?? "");
@@ -443,6 +448,11 @@ export function SettingsScreenNext() {
     { key: "account", label: "Compte" },
     { key: "notifications", label: "Notifs" },
   ];
+  const isPublishedShop = shopPublished;
+  const previewShopHref = `${getShopHref({
+    id: user?.id ?? "seller",
+    name: shopName.trim() || user?.shopName || "boutique",
+  })}?preview=1`;
 
   const saveName = () => {
     const run = async () => {
@@ -673,6 +683,18 @@ export function SettingsScreenNext() {
                       value={shopDesc}
                       onChange={(e) => setShopDesc(e.target.value)}
                       rows={3}
+                      className="w-full bg-muted rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-green/30 border border-transparent focus:border-green/50 transition-all resize-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Histoire de la boutique
+                    </label>
+                    <textarea
+                      value={shopStory}
+                      onChange={(e) => setShopStory(e.target.value)}
+                      rows={5}
                       className="w-full bg-muted rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-green/30 border border-transparent focus:border-green/50 transition-all resize-none"
                     />
                   </div>
@@ -1030,23 +1052,63 @@ export function SettingsScreenNext() {
               <Button
                 fullWidth
                 size="lg"
-                variant="accent"
-                icon={<Save className="w-4 h-4" />}
-                onClick={() => handleSave(false)}
-                disabled={isSaving}
+                variant="outline"
+                icon={<Store className="w-4 h-4" />}
+                onClick={() => {
+                  if (typeof window !== "undefined") {
+                    window.open(previewShopHref, "_blank", "noopener,noreferrer");
+                  }
+                }}
               >
-                {saved && !shopPublished ? "Brouillon enregistré !" : isSaving ? "Enregistrement..." : "Enregistrer en brouillon"}
+                Voir l'aperçu de la boutique
               </Button>
-              <Button
-                fullWidth
-                size="lg"
-                variant="accent"
-                icon={<Save className="w-4 h-4" />}
-                onClick={() => handleSave(true)}
-                disabled={isSaving}
-              >
-                {saved && shopPublished ? "Boutique publiée !" : isSaving ? "Publication..." : "Publier la boutique"}
-              </Button>
+              {!isPublishedShop ? (
+                <>
+                  <Button
+                    fullWidth
+                    size="lg"
+                    variant="accent"
+                    icon={<Save className="w-4 h-4" />}
+                    onClick={() => handleSave(false)}
+                    disabled={isSaving}
+                  >
+                    {saved && !shopPublished ? "Brouillon enregistré !" : isSaving ? "Enregistrement..." : "Enregistrer en brouillon"}
+                  </Button>
+                  <Button
+                    fullWidth
+                    size="lg"
+                    variant="accent"
+                    icon={<Save className="w-4 h-4" />}
+                    onClick={() => handleSave(true)}
+                    disabled={isSaving}
+                  >
+                    {saved && shopPublished ? "Boutique publiée !" : isSaving ? "Publication..." : "Publier la boutique"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    fullWidth
+                    size="lg"
+                    variant="outline"
+                    icon={<Save className="w-4 h-4" />}
+                    onClick={() => handleSave(false)}
+                    disabled={isSaving}
+                  >
+                    {isSaving ? "Désactivation..." : "Désactiver la boutique"}
+                  </Button>
+                  <Button
+                    fullWidth
+                    size="lg"
+                    variant="accent"
+                    icon={<Save className="w-4 h-4" />}
+                    onClick={() => handleSave(true)}
+                    disabled={isSaving}
+                  >
+                    {saved && shopPublished ? "Modifications sauvegardées !" : isSaving ? "Enregistrement..." : "Sauvegarder les modifications"}
+                  </Button>
+                </>
+              )}
               {saveError && (
                 <p className="text-sm text-destructive text-center">{saveError}</p>
               )}

@@ -46,7 +46,7 @@ export function SiretScreenNext() {
       return;
     }
     if (user?.siretVerified) {
-      push("/dashboard");
+      push("/settings");
     }
   }, [isAuthenticated, user?.siretVerified, push]);
 
@@ -140,7 +140,7 @@ export function SiretScreenNext() {
           shopAddress: nextCompanyAddress,
           sellerAttested: true,
         });
-        push("/dashboard");
+        push("/settings");
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Impossible de finaliser la vérification.";

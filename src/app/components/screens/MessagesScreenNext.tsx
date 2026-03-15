@@ -3,8 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Send, ImageIcon, ChevronRight } from "lucide-react";
-import { Header, BottomNav, Badge } from "../ds";
-import { useAuth } from "../AuthContext";
+import { Header, Badge } from "../ds";
 import { trackLeadEvent } from "../../services/leadEvents";
 import { fetchShops } from "../../services/catalog";
 import type { Shop } from "../../types/catalog";
@@ -18,9 +17,6 @@ interface Message {
 }
 
 function ConversationList({ onSelect }: { onSelect: (shopId: string) => void }) {
-  const router = useRouter();
-  const push = (path: string) => router.push(path);
-  const { user, isAuthenticated } = useAuth();
   const [shops, setShops] = useState<Shop[]>([]);
 
   useEffect(() => {
@@ -71,25 +67,6 @@ function ConversationList({ onSelect }: { onSelect: (shopId: string) => void }) 
           </div>
         )}
       </div>
-      <BottomNav
-        active="messages"
-        onNavigate={(tab) => {
-          if (tab === "home") push("/home");
-          if (tab === "cart") push("/cart");
-          if (tab === "profile") {
-            if (!isAuthenticated) {
-              push("/auth");
-              return;
-            }
-            if (user?.role === "seller") {
-              push(user.siretVerified ? "/dashboard" : "/siret");
-              return;
-            }
-            push("/profile");
-          }
-          if (tab === "messages") push("/messages");
-        }}
-      />
     </div>
   );
 }

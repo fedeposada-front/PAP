@@ -88,6 +88,8 @@ create table if not exists public.shops (
   name text not null,
   category text not null,
   description text,
+  story text,
+  team_members jsonb not null default '[]'::jsonb,
   address text not null,
   city text not null default 'Amiens',
   postal_code text,
@@ -108,11 +110,35 @@ create table if not exists public.shops (
 
 alter table public.shops add column if not exists is_published boolean not null default true;
 
-create table if not exists public.products (
+create table if not exists public.followed_shops (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  shop_id uuid not null references public.shops(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, shop_id)
+);
+
+create table if not exists public.shop_collections (
   id uuid primary key default gen_random_uuid(),
   shop_id uuid not null references public.shops(id) on delete cascade,
   title text not null,
   description text,
+  year integer,
+  image_url text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.products (
+  id uuid primary key default gen_random_uuid(),
+  shop_id uuid not null references public.shops(id) on delete cascade,
+  collection_id uuid references public.shop_collections(id) on delete set null,
+  title text not null,
+  description text,
+  features text,
+  composition text,
+  return_conditions text,
+  color text,
+  colors text[] not null default array[]::text[],
   price numeric(10,2) not null check (price >= 0),
   image_url text,
   category text not null,
@@ -135,13 +161,6 @@ create table if not exists public.favorite_products (
   primary key (user_id, product_id)
 );
 
-create table if not exists public.followed_shops (
-  user_id uuid not null references auth.users(id) on delete cascade,
-  shop_id uuid not null references public.shops(id) on delete cascade,
-  created_at timestamptz not null default now(),
-  primary key (user_id, shop_id)
-);
-
 create table if not exists public.shop_news (
   id uuid primary key default gen_random_uuid(),
   shop_id uuid not null references public.shops(id) on delete cascade,
@@ -151,6 +170,13 @@ create table if not exists public.shop_news (
   is_published boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table if not exists public.shop_news_likes (
+  news_id uuid not null references public.shop_news(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (news_id, user_id)
 );
 
 do $$
@@ -222,14 +248,19 @@ create table if not exists public.ad_clicks (
 create index if not exists idx_shops_city on public.shops(city);
 create index if not exists idx_shops_category on public.shops(category);
 create index if not exists idx_shops_is_published on public.shops(is_published);
+create unique index if not exists uniq_shops_owner_user_id on public.shops(owner_user_id) where owner_user_id is not null;
 create index if not exists idx_profiles_active_role on public.profiles(active_role);
 create index if not exists idx_profiles_siret_verified on public.profiles(siret_verified);
 create index if not exists idx_products_shop_id on public.products(shop_id);
+create index if not exists idx_products_collection_id on public.products(collection_id);
 create index if not exists idx_products_category on public.products(category);
 create index if not exists idx_favorite_products_user_created_at on public.favorite_products(user_id, created_at desc);
 create index if not exists idx_followed_shops_user_created_at on public.followed_shops(user_id, created_at desc);
+create index if not exists idx_shop_collections_shop_id on public.shop_collections(shop_id, created_at desc);
 create index if not exists idx_shop_news_shop_created_at on public.shop_news(shop_id, created_at desc);
 create index if not exists idx_shop_news_published on public.shop_news(is_published);
+create index if not exists idx_shop_news_likes_news_id on public.shop_news_likes(news_id);
+create index if not exists idx_shop_news_likes_user_id on public.shop_news_likes(user_id);
 create index if not exists idx_lead_events_shop_id on public.lead_events(shop_id);
 create index if not exists idx_lead_events_type on public.lead_events(event_type);
 create index if not exists idx_lead_events_created_at on public.lead_events(created_at desc);
@@ -252,6 +283,11 @@ create trigger trg_products_updated_at
 before update on public.products
 for each row execute function public.set_updated_at();
 
+drop trigger if exists trg_shop_collections_updated_at on public.shop_collections;
+create trigger trg_shop_collections_updated_at
+before update on public.shop_collections
+for each row execute function public.set_updated_at();
+
 drop trigger if exists trg_shop_news_updated_at on public.shop_news;
 create trigger trg_shop_news_updated_at
 before update on public.shop_news
@@ -267,7 +303,9 @@ alter table public.shops enable row level security;
 alter table public.products enable row level security;
 alter table public.favorite_products enable row level security;
 alter table public.followed_shops enable row level security;
+alter table public.shop_collections enable row level security;
 alter table public.shop_news enable row level security;
+alter table public.shop_news_likes enable row level security;
 alter table public.lead_events enable row level security;
 alter table public.ads enable row level security;
 alter table public.ad_impressions enable row level security;
@@ -277,15 +315,20 @@ grant usage on schema public to anon, authenticated, service_role;
 
 grant select on public.shops to anon;
 grant select on public.products to anon;
+grant select on public.shop_collections to anon;
 grant select on public.ads to anon;
 grant select on public.shop_news to anon;
+grant select on public.shop_news_likes to anon;
 
 grant select, insert, update, delete on public.profiles to authenticated;
 grant select, insert, update, delete on public.shops to authenticated;
 grant select, insert, update, delete on public.products to authenticated;
 grant select, insert, update, delete on public.favorite_products to authenticated;
 grant select, insert, update, delete on public.followed_shops to authenticated;
+grant select, insert, update, delete on public.shop_collections to authenticated;
 grant select, insert, update, delete on public.shop_news to authenticated;
+grant select on public.shop_news_likes to authenticated;
+grant insert, delete on public.shop_news_likes to authenticated;
 grant select, insert, update, delete on public.lead_events to authenticated;
 grant select, insert, update, delete on public.ads to authenticated;
 grant select, insert, update, delete on public.ad_impressions to authenticated;
@@ -389,6 +432,30 @@ for delete
 to authenticated
 using (auth.uid() = user_id);
 
+drop policy if exists "shop collections are readable by everyone" on public.shop_collections;
+create policy "shop collections are readable by everyone"
+on public.shop_collections
+for select
+using (true);
+
+drop policy if exists "shop owners can manage own collections" on public.shop_collections;
+create policy "shop owners can manage own collections"
+on public.shop_collections
+for all
+to authenticated
+using (
+  exists (
+    select 1 from public.shops s
+    where s.id = shop_collections.shop_id and s.owner_user_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1 from public.shops s
+    where s.id = shop_collections.shop_id and s.owner_user_id = auth.uid()
+  )
+);
+
 drop policy if exists "published shop news are readable by everyone" on public.shop_news;
 create policy "published shop news are readable by everyone"
 on public.shop_news
@@ -448,6 +515,26 @@ using (
     where s.id = shop_news.shop_id and s.owner_user_id = auth.uid()
   )
 );
+
+drop policy if exists "shop news likes are readable by everyone" on public.shop_news_likes;
+create policy "shop news likes are readable by everyone"
+on public.shop_news_likes
+for select
+using (true);
+
+drop policy if exists "users can insert own shop news likes" on public.shop_news_likes;
+create policy "users can insert own shop news likes"
+on public.shop_news_likes
+for insert
+to authenticated
+with check (auth.uid() = user_id);
+
+drop policy if exists "users can delete own shop news likes" on public.shop_news_likes;
+create policy "users can delete own shop news likes"
+on public.shop_news_likes
+for delete
+to authenticated
+using (auth.uid() = user_id);
 
 drop policy if exists "shop owners can insert products" on public.products;
 create policy "shop owners can insert products"

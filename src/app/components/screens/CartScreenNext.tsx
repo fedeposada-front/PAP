@@ -9,15 +9,13 @@ import {
   Plus,
   ShoppingBag,
 } from "lucide-react";
-import { Button, Badge, Header, BottomNav } from "../ds";
+import { Button, Badge, Header } from "../ds";
 import { useCart } from "../CartContext";
-import { useAuth } from "../AuthContext";
 
 export function CartScreenNext() {
   const router = useRouter();
   const push = (path: string) => router.push(path);
   const { items, updateQty, removeItem, toggleMode, subtotal, buyerFee, total, totalItems } = useCart();
-  const { user, isAuthenticated } = useAuth();
 
   return (
     <div className="min-h-screen flex flex-col bg-background pb-16">
@@ -42,7 +40,7 @@ export function CartScreenNext() {
           ) : (
             items.map((item) => (
               <div
-                key={item.product.id}
+                key={`${item.product.id}-${item.color ?? "default"}`}
                 className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm"
               >
                 <div className="flex gap-3">
@@ -65,9 +63,14 @@ export function CartScreenNext() {
                     <p className="text-coral mt-0.5">
                       {(item.product.price * item.qty).toFixed(2)} €
                     </p>
+                    {item.color && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Couleur : {item.color}
+                      </p>
+                    )}
                   </div>
                   <button
-                    onClick={() => removeItem(item.product.id)}
+                    onClick={() => removeItem(item.product.id, item.color)}
                     className="text-muted-foreground hover:text-destructive self-start transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -78,14 +81,14 @@ export function CartScreenNext() {
                 <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
                   <div className="flex items-center gap-3">
                     <button
-                      onClick={() => updateQty(item.product.id, -1)}
+                      onClick={() => updateQty(item.product.id, -1, item.color)}
                       className="w-8 h-8 flex items-center justify-center rounded-full border border-border hover:bg-muted transition-colors"
                     >
                       <Minus className="w-3.5 h-3.5" />
                     </button>
                     <span className="w-6 text-center">{item.qty}</span>
                     <button
-                      onClick={() => updateQty(item.product.id, 1)}
+                      onClick={() => updateQty(item.product.id, 1, item.color)}
                       className="w-8 h-8 flex items-center justify-center rounded-full border border-border hover:bg-muted transition-colors"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -94,7 +97,7 @@ export function CartScreenNext() {
 
                   <div className="flex gap-2">
                     <button
-                      onClick={() => { if (item.mode !== "pickup") toggleMode(item.product.id); }}
+                      onClick={() => { if (item.mode !== "pickup") toggleMode(item.product.id, item.color); }}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
                         item.mode === "pickup"
                           ? "bg-coral-light text-coral"
@@ -106,7 +109,7 @@ export function CartScreenNext() {
                     </button>
                     {item.product.delivery && (
                       <button
-                        onClick={() => { if (item.mode !== "delivery") toggleMode(item.product.id); }}
+                        onClick={() => { if (item.mode !== "delivery") toggleMode(item.product.id, item.color); }}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
                           item.mode === "delivery"
                             ? "bg-coral-light text-coral"
@@ -190,22 +193,6 @@ export function CartScreenNext() {
         </div>
       )}
 
-      <BottomNav active="cart" onNavigate={(tab) => {
-        if (tab === "home") push("/home");
-        if (tab === "cart") push("/cart");
-        if (tab === "messages") push("/messages");
-        if (tab === "profile") {
-          if (!isAuthenticated) {
-            push("/auth");
-            return;
-          }
-          if (user?.role === "seller") {
-            push(user.siretVerified ? "/dashboard" : "/siret");
-            return;
-          }
-          push("/profile");
-        }
-      }} />
     </div>
   );
 }

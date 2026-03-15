@@ -26,7 +26,6 @@ import {
   Chip,
   ShopCard,
   ProductCard,
-  BottomNav,
   BottomSheet,
   Button,
   Logo,
@@ -74,6 +73,7 @@ export function HomeScreenNext() {
 
   const [shops, setShops] = useState<Shop[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const toKmDistance = (fromLat: number, fromLng: number, toLat: number, toLng: number) => {
     const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -167,13 +167,21 @@ export function HomeScreenNext() {
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
-      const [nextShops, nextProducts] = await Promise.all([
-        fetchShops(),
-        fetchProducts(),
-      ]);
-      if (cancelled) return;
-      setShops(nextShops);
-      setProducts(nextProducts);
+      try {
+        setLoadError(null);
+        const [nextShops, nextProducts] = await Promise.all([
+          fetchShops(),
+          fetchProducts(),
+        ]);
+        if (cancelled) return;
+        setShops(nextShops);
+        setProducts(nextProducts);
+      } catch (error) {
+        if (cancelled) return;
+        setShops([]);
+        setProducts([]);
+        setLoadError(error instanceof Error ? error.message : "Impossible de charger les boutiques et produits.");
+      }
     };
     void run();
     return () => {
@@ -188,6 +196,13 @@ export function HomeScreenNext() {
 
   return (
     <div className="min-h-screen flex flex-col bg-background pb-16 lg:pb-0">
+      {loadError && (
+        <div className="px-4 pt-4 lg:px-8">
+          <div className="rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            {loadError}
+          </div>
+        </div>
+      )}
       {/* Desktop nav */}
       <header className="hidden lg:flex items-center justify-between px-8 py-3 bg-white border-b border-border">
         <Logo size="lg" href="/home" />
@@ -217,11 +232,15 @@ export function HomeScreenNext() {
             )}
           </button>
           <button
-            onClick={() => navigate("/messages")}
+            onClick={() => navigate("/news")}
             className="text-muted-foreground hover:text-foreground"
+            title="Fil d'actualités"
           >
-            💬
+            <Bell className="w-5 h-5" />
           </button>
+          <Button size="sm" variant="outline" onClick={() => navigate("/news")}>
+            Actualités
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -289,7 +308,7 @@ export function HomeScreenNext() {
               )}
             </button>
             <button
-              onClick={() => navigate("/messages")}
+              onClick={() => navigate("/news")}
               className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-muted transition-colors"
             >
               <Bell className="w-5 h-5 text-foreground" />
@@ -316,6 +335,14 @@ export function HomeScreenNext() {
             className="text-bleu ml-1 flex-shrink-0"
           >
             Modifier
+          </button>
+        </div>
+        <div className="px-4 pt-2">
+          <button
+            onClick={() => navigate("/news")}
+            className="w-full rounded-2xl bg-coral-light text-coral px-4 py-3 text-sm text-left"
+          >
+            Voir les actualités
           </button>
         </div>
       </div>
@@ -602,24 +629,6 @@ export function HomeScreenNext() {
           )}
         </div>
       </div>
-
-      {/* Mobile bottom nav */}
-      <BottomNav active="home" onNavigate={(tab) => {
-        if (tab === "cart") navigate("/cart");
-        if (tab === "profile") {
-          if (!isAuthenticated) {
-            navigate("/auth");
-            return;
-          }
-          if (user?.role === "seller") {
-            navigate(user.siretVerified ? "/dashboard" : "/siret");
-            return;
-          }
-          navigate("/profile");
-        }
-        if (tab === "messages") navigate("/messages");
-      }} />
-
       {/* Category picker bottom sheet (mobile) */}
       <BottomSheet
         isOpen={showCategories}

@@ -113,6 +113,28 @@ function isJwtExpiredError(error: unknown): boolean {
   return /jwt expired|token.*expired/i.test(error.message);
 }
 
+function getJwtExpirationMs(accessToken: string): number | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const [, payload] = accessToken.split(".");
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = window.atob(padded);
+    const parsed = JSON.parse(decoded) as { exp?: unknown };
+    if (typeof parsed.exp !== "number") return null;
+    return parsed.exp * 1000;
+  } catch {
+    return null;
+  }
+}
+
+function isAccessTokenExpired(accessToken: string): boolean {
+  const expirationMs = getJwtExpirationMs(accessToken);
+  if (!expirationMs) return false;
+  return expirationMs <= Date.now() + 5_000;
+}
+
 async function requestJson<T>(
   url: string,
   init: RequestInit,
@@ -276,8 +298,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     persistSession(nextSession);
   };
 
-  const refreshAccessToken = async (): Promise<AuthSession> => {
-    if (!session?.refresh_token) {
+  const refreshAccessTokenFromSession = async (currentSession: AuthSession): Promise<AuthSession> => {
+    if (!currentSession.refresh_token) {
       throw new Error("Session expiree. Merci de vous reconnecter.");
     }
 
@@ -286,15 +308,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refresh_token?: string;
     }>(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
       method: "POST",
-      body: JSON.stringify({ refresh_token: session.refresh_token }),
+      body: JSON.stringify({ refresh_token: currentSession.refresh_token }),
     });
 
     const nextSession: AuthSession = {
       access_token: refreshed.access_token,
-      refresh_token: refreshed.refresh_token ?? session.refresh_token,
+      refresh_token: refreshed.refresh_token ?? currentSession.refresh_token,
     };
     setActiveSession(nextSession);
     return nextSession;
+  };
+
+  const refreshAccessToken = async (): Promise<AuthSession> => {
+    if (!session) {
+      throw new Error("Session expiree. Merci de vous reconnecter.");
+    }
+    return refreshAccessTokenFromSession(session);
   };
 
   const withSessionRetry = async <T,>(requestWithToken: (accessToken: string) => Promise<T>): Promise<T> => {
@@ -681,7 +710,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           current.searchParams.delete("provider_refresh_token");
           window.history.replaceState({}, document.title, `${current.pathname}${current.search}`);
         }
-        setActiveSession(existing);
+        const sessionToUse =
+          isAccessTokenExpired(existing.access_token) && existing.refresh_token
+            ? await refreshAccessTokenFromSession(existing)
+            : existing;
+        setActiveSession(sessionToUse);
 
         const roleFromUrl =
           typeof window !== "undefined"
@@ -691,7 +724,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           roleFromUrl === "buyer" || roleFromUrl === "seller" ? roleFromUrl : undefined;
         const preferredRole = preferredRoleFromUrl ?? getStoredOAuthPreferredRole();
 
-        await fetchCurrentUser(existing.access_token, preferredRole);
+        await fetchCurrentUser(sessionToUse.access_token, preferredRole);
         persistOAuthPreferredRole(undefined);
       } catch {
         if (!cancelled) {
@@ -709,6 +742,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!session?.access_token || !session.refresh_token) return;
+
+    const expirationMs = getJwtExpirationMs(session.access_token);
+    if (!expirationMs) return;
+
+    const refreshDelay = Math.max(5_000, expirationMs - Date.now() - 60_000);
+    const timeoutId = window.setTimeout(() => {
+      void refreshAccessToken().catch(() => {
+        setUser(null);
+        setActiveSession(null);
+      });
+    }, refreshDelay);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [session]);
 
   const value: AuthContextType = {
     user,

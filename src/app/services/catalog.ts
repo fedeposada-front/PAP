@@ -1,4 +1,4 @@
-import type { Product, Shop } from "../types/catalog";
+import type { Product, Shop, ShopTeamMember } from "../types/catalog";
 import { toShopSlug } from "../utils/shopRouting";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -11,6 +11,8 @@ interface ShopRow {
   name: string;
   category: string;
   description: string | null;
+  story?: string | null;
+  team_members?: unknown;
   address: string;
   city: string;
   phone: string | null;
@@ -19,14 +21,38 @@ interface ShopRow {
   open_sunday: boolean;
   delivery: boolean;
   hours: string | null;
-  opening_hours: OpeningHours | null;
+  opening_hours?: OpeningHours | null;
   rating: number | null;
   review_count: number;
   lat: number | null;
   lng: number | null;
   is_published: boolean | null;
-  logo_image_url: string | null;
-  banner_image_url: string | null;
+  logo_image_url?: string | null;
+  banner_image_url?: string | null;
+}
+
+function mapTeamMembers(value: unknown): ShopTeamMember[] {
+  if (!Array.isArray(value)) return [];
+  const teamMembers: ShopTeamMember[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item as { name?: unknown; role?: unknown; image_url?: unknown; imageUrl?: unknown };
+    const name = typeof raw.name === "string" ? raw.name.trim() : "";
+    const role = typeof raw.role === "string" ? raw.role.trim() : "";
+    const imageUrl =
+      typeof raw.image_url === "string"
+        ? raw.image_url
+        : typeof raw.imageUrl === "string"
+          ? raw.imageUrl
+          : "";
+    if (!name) continue;
+    teamMembers.push({
+      name,
+      role,
+      imageUrl: imageUrl || undefined,
+    });
+  }
+  return teamMembers;
 }
 
 interface ProductRow {
@@ -34,6 +60,11 @@ interface ProductRow {
   shop_id: string;
   title: string;
   description: string | null;
+  features: string | null;
+  composition: string | null;
+  return_conditions: string | null;
+  color: string | null;
+  colors: string[] | null;
   price: number;
   image_url: string | null;
   category: string;
@@ -46,6 +77,21 @@ interface ProductRow {
 
 function hasSupabaseConfig() {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+}
+
+function isSchemaColumnError(message: string, columns: string[]) {
+  const normalizedMessage = message.toLowerCase();
+  return (
+    columns.some((column) => {
+      const normalizedColumn = column.toLowerCase();
+      return (
+        normalizedMessage.includes(normalizedColumn) ||
+        normalizedMessage.includes(`.${normalizedColumn}`) ||
+        normalizedMessage.includes(`"${normalizedColumn}"`)
+      );
+    }) ||
+    /schema cache/i.test(message)
+  );
 }
 
 function isValidTime(value: string) {
@@ -72,11 +118,16 @@ async function requestSupabase<T>(path: string): Promise<T> {
     cache: "no-store",
   });
 
+  const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(`Supabase request failed (${response.status})`);
+    const message =
+      payload && typeof payload === "object" && "message" in payload
+        ? String((payload as { message?: string }).message)
+        : `Supabase request failed (${response.status})`;
+    throw new Error(message);
   }
 
-  return response.json() as Promise<T>;
+  return payload as T;
 }
 
 function mapShop(row: ShopRow): Shop {
@@ -94,7 +145,7 @@ function mapShop(row: ShopRow): Shop {
   if (hasValidDaySchedule) {
     const now = new Date();
     const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    isOpenBySchedule = hhmm >= daySchedule.openTime && hhmm <= daySchedule.closeTime;
+    isOpenBySchedule = hhmm >= daySchedule!.openTime! && hhmm <= daySchedule!.closeTime!;
   }
 
   const todayHours = hasValidDaySchedule
@@ -128,6 +179,8 @@ function mapShop(row: ShopRow): Shop {
     openingHours: row.opening_hours ?? undefined,
     phone: row.phone ?? "",
     description: row.description ?? "",
+    story: row.story ?? "",
+    teamMembers: mapTeamMembers(row.team_members),
     lat: row.lat ?? Number.NaN,
     lng: row.lng ?? Number.NaN,
   };
@@ -145,6 +198,11 @@ function mapProduct(row: ProductRow, shopName: string): Product {
     availableToday: row.available_today,
     stock: row.stock,
     description: row.description ?? "",
+    features: row.features ?? "",
+    composition: row.composition ?? "",
+    returnConditions: row.return_conditions ?? "",
+    color: row.color ?? "",
+    colors: Array.isArray(row.colors) ? row.colors.filter(Boolean) : (row.color ? [row.color] : []),
     pickup: row.pickup,
     delivery: row.delivery,
     addedAt: row.created_at,
@@ -152,31 +210,63 @@ function mapProduct(row: ProductRow, shopName: string): Product {
 }
 
 export async function fetchShops(): Promise<Shop[]> {
-  if (!hasSupabaseConfig()) return [];
+  if (!hasSupabaseConfig()) {
+    throw new Error("Configuration Supabase manquante.");
+  }
   try {
-    const rows = await requestSupabase<ShopRow[]>(
-      "shops?select=id,name,category,description,address,city,phone,is_open,pickup_today,open_sunday,delivery,hours,opening_hours,rating,review_count,lat,lng,is_published,logo_image_url,banner_image_url&is_published=eq.true&order=created_at.desc"
-    );
+    let rows: ShopRow[];
+    try {
+      rows = await requestSupabase<ShopRow[]>(
+        "shops?select=id,name,category,description,story,team_members,address,city,phone,is_open,pickup_today,open_sunday,delivery,hours,opening_hours,rating,review_count,lat,lng,is_published,logo_image_url,banner_image_url&is_published=eq.true&order=created_at.desc"
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!isSchemaColumnError(message, ["story", "team_members", "opening_hours", "logo_image_url", "banner_image_url"])) {
+        throw error;
+      }
+      rows = await requestSupabase<ShopRow[]>(
+        "shops?select=id,name,category,description,address,city,phone,is_open,pickup_today,open_sunday,delivery,hours,rating,review_count,lat,lng,is_published&is_published=eq.true&order=created_at.desc"
+      );
+    }
     return rows.map(mapShop);
-  } catch {
-    return [];
+  } catch (error) {
+    console.error("fetchShops failed", error);
+    throw error;
   }
 }
 
 export async function fetchProducts(): Promise<Product[]> {
-  if (!hasSupabaseConfig()) return [];
+  if (!hasSupabaseConfig()) {
+    throw new Error("Configuration Supabase manquante.");
+  }
   try {
-    const [productRows, shopRows] = await Promise.all([
-      requestSupabase<ProductRow[]>(
-        "products?select=id,shop_id,title,description,price,image_url,category,available_today,stock,pickup,delivery,created_at&is_published=eq.true&order=created_at.desc"
-      ),
-      requestSupabase<Pick<ShopRow, "id" | "name">[]>("shops?select=id,name&is_published=eq.true"),
-    ]);
+    const shopRowsPromise = requestSupabase<Pick<ShopRow, "id" | "name">[]>("shops?select=id,name&is_published=eq.true");
+    let productRowsPromise = requestSupabase<ProductRow[]>(
+      "products?select=id,shop_id,title,description,features,composition,return_conditions,color,colors,price,image_url,category,available_today,stock,pickup,delivery,created_at&is_published=eq.true&order=created_at.desc"
+    );
+
+    let productRows: ProductRow[];
+    let shopRows: Pick<ShopRow, "id" | "name">[];
+    try {
+      [productRows, shopRows] = await Promise.all([productRowsPromise, shopRowsPromise]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors"])) {
+        throw error;
+      }
+      [productRows, shopRows] = await Promise.all([
+        requestSupabase<ProductRow[]>(
+          "products?select=id,shop_id,title,description,price,image_url,category,available_today,stock,pickup,delivery,created_at&is_published=eq.true&order=created_at.desc"
+        ),
+        shopRowsPromise,
+      ]);
+    }
     const shopNameById = new Map(shopRows.map((shop) => [shop.id, shop.name]));
     return productRows
       .filter((row) => shopNameById.has(row.shop_id))
       .map((row) => mapProduct(row, shopNameById.get(row.shop_id) ?? "Boutique"));
-  } catch {
-    return [];
+  } catch (error) {
+    console.error("fetchProducts failed", error);
+    throw error;
   }
 }

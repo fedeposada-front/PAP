@@ -14,7 +14,7 @@ import {
   Truck,
   ChevronRight,
 } from "lucide-react";
-import { Button, Badge, Header, BottomNav, Logo } from "../ds";
+import { Button, Badge, Header, Logo } from "../ds";
 import { useCart } from "../CartContext";
 import { useAuth } from "../AuthContext";
 import { trackLeadEvent } from "../../services/leadEvents";
@@ -33,22 +33,39 @@ export function ProductScreenNext() {
   const [shop, setShop] = useState<Shop | null>(null);
   const [added, setAdded] = useState(false);
   const [liked, setLiked] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
-      const [allProducts, allShops] = await Promise.all([fetchProducts(), fetchShops()]);
-      const nextProduct = allProducts.find((p) => p.id === id) ?? null;
-      const nextShop = nextProduct ? allShops.find((s) => s.id === nextProduct.shopId) ?? null : null;
-      if (cancelled) return;
-      setProduct(nextProduct);
-      setShop(nextShop);
+      try {
+        setLoadError(null);
+        const [allProducts, allShops] = await Promise.all([fetchProducts(), fetchShops()]);
+        const nextProduct = allProducts.find((p) => p.id === id) ?? null;
+        const nextShop = nextProduct ? allShops.find((s) => s.id === nextProduct.shopId) ?? null : null;
+        if (cancelled) return;
+        setProduct(nextProduct);
+        setShop(nextShop);
+      } catch (error) {
+        if (cancelled) return;
+        setProduct(null);
+        setShop(null);
+        setLoadError(error instanceof Error ? error.message : "Impossible de charger le produit.");
+      }
     };
     void run();
     return () => {
       cancelled = true;
     };
   }, [id]);
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-4">
+        <p className="text-destructive">{loadError}</p>
+      </div>
+    );
+  }
 
   if (!product) {
     return (
@@ -58,11 +75,12 @@ export function ProductScreenNext() {
     );
   }
 
-  const isInCart = items.some((i) => i.product.id === product.id);
+  const effectiveColor = product.color?.trim() || product.colors?.find((entry) => entry.trim()) || "";
+  const isInCart = items.some((i) => i.product.id === product.id && (i.color ?? "") === effectiveColor);
 
   const handleAddToCart = (goToCart = false) => {
     if (!isInCart) {
-      addItem(product, product.pickup ? "pickup" : "delivery");
+      addItem(product, product.pickup ? "pickup" : "delivery", effectiveColor || undefined);
     }
     if (goToCart) {
       push("/cart");
@@ -239,6 +257,46 @@ export function ProductScreenNext() {
             </p>
           </div>
 
+          {product.features?.trim() && (
+            <div className="px-4 lg:px-0 mb-4">
+              <h4 className="mb-2">Caractéristiques</h4>
+              <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
+                {product.features}
+              </p>
+            </div>
+          )}
+
+          {product.color?.trim() && (
+            <div className="px-4 lg:px-0 mb-4">
+              <h4 className="mb-2">Couleur</h4>
+              <div className="flex items-center gap-3">
+                <span
+                  className="inline-flex h-6 w-6 rounded-full border border-border"
+                  style={{ backgroundColor: product.color }}
+                />
+                <p className="text-sm text-muted-foreground">{product.color}</p>
+              </div>
+            </div>
+          )}
+
+          {product.composition?.trim() && (
+            <div className="px-4 lg:px-0 mb-4">
+              <h4 className="mb-2">Composition</h4>
+              <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
+                {product.composition}
+              </p>
+            </div>
+          )}
+
+          {product.returnConditions?.trim() && (
+            <div className="px-4 lg:px-0 mb-4">
+              <h4 className="mb-2">Conditions de retour</h4>
+              <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
+                {product.returnConditions}
+              </p>
+            </div>
+          )}
+
           {/* Shop info card */}
           {shop && (
             <div
@@ -326,23 +384,6 @@ export function ProductScreenNext() {
           {added ? "Ajouté !" : isInCart ? "Dans le panier" : "Ajouter"}
         </Button>
       </div>
-
-      <BottomNav active="home" onNavigate={(tab) => {
-        if (tab === "home") push("/home");
-        if (tab === "cart") push("/cart");
-        if (tab === "messages") push("/messages");
-        if (tab === "profile") {
-          if (!isAuthenticated) {
-            push("/auth");
-            return;
-          }
-          if (user?.role === "seller") {
-            push(user.siretVerified ? "/dashboard" : "/siret");
-            return;
-          }
-          push("/profile");
-        }
-      }} />
     </div>
   );
 }

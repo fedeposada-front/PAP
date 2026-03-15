@@ -1,3 +1,9 @@
+export interface ShopTeamMember {
+  name: string;
+  role: string;
+  imageUrl?: string;
+}
+
 export interface Shop {
   id: string;
   slug?: string;
@@ -19,6 +25,8 @@ export interface Shop {
   openingHours?: Record<string, { open?: boolean; openTime?: string; closeTime?: string }>;
   phone: string;
   description: string;
+  story?: string;
+  teamMembers?: ShopTeamMember[];
   lat: number;
   lng: number;
 }
@@ -34,6 +42,11 @@ export interface Product {
   availableToday: boolean;
   stock: number;
   description: string;
+  features?: string;
+  composition?: string;
+  returnConditions?: string;
+  color?: string;
+  colors?: string[];
   pickup: boolean;
   delivery: boolean;
   addedAt: string;

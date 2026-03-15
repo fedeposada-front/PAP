@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   Star,
   MapPin,
@@ -12,9 +12,10 @@ import {
   Share2,
   UserPlus,
   UserCheck,
+  ChevronRight,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button, Badge, ProductCard, Header, BottomNav } from "../ds";
+import { Button, Badge, ProductCard, Header } from "../ds";
 import { useAuth } from "../AuthContext";
 import { trackLeadEvent } from "../../services/leadEvents";
 import { fetchProducts, fetchShops } from "../../services/catalog";
@@ -22,6 +23,15 @@ import type { Product, Shop } from "../../types/catalog";
 import { toShopSlug } from "../../utils/shopRouting";
 import { getCategoryLabel } from "../../data/catalog";
 import { fetchPublicShopNews, type ShopNewsItem } from "../../services/shopNews";
+import { fetchShopSettings } from "../../services/shopSettings";
+import { fetchSellerProducts } from "../../services/sellerProducts";
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  CarouselNext,
+  CarouselPrevious,
+} from "../ui/carousel";
 import {
   fetchIsFollowingShop,
   fetchShopFollowersCount,
@@ -31,50 +41,115 @@ import {
 
 export function ShopScreenNext() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const routeParam = decodeURIComponent(params.id ?? "");
   const normalizedRouteParam = routeParam.toLowerCase();
+  const isPreviewMode = searchParams.get("preview") === "1";
   const router = useRouter();
   const push = (path: string) => router.push(path);
   const [shop, setShop] = useState<Shop | null>(null);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const shopProducts = shop ? allProducts.filter((p) => p.shopId === shop.id) : [];
+  const shopNewsHref = shop ? `/shop/${encodeURIComponent(shop.slug ?? toShopSlug(shop.name))}/news` : "";
   const [liked, setLiked] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followersCount, setFollowersCount] = useState(0);
   const [newsItems, setNewsItems] = useState<ShopNewsItem[]>([]);
-  const { user, isAuthenticated, accessToken } = useAuth();
+  const { user, accessToken } = useAuth();
+
+  const mapPreviewShop = (shopSettings: Awaited<ReturnType<typeof fetchShopSettings>>): Shop | null => {
+    if (!shopSettings) return null;
+    return {
+      id: shopSettings.id,
+      slug: toShopSlug(shopSettings.name),
+      name: shopSettings.name,
+      category: shopSettings.category,
+      image: shopSettings.logo_image_url || "https://placehold.co/640x640?text=MonCadeauLocal",
+      bannerImage: shopSettings.banner_image_url || shopSettings.logo_image_url || "https://placehold.co/1280x640?text=MonCadeauLocal",
+      rating: 0,
+      reviewCount: 0,
+      distance: shopSettings.city || "-",
+      address: shopSettings.address,
+      city: shopSettings.city,
+      isOpen: false,
+      pickupToday: Boolean(shopSettings.pickup_today),
+      openSunday: false,
+      delivery: Boolean(shopSettings.delivery),
+      hours: shopSettings.hours || "Horaires non renseignés",
+      openingHours: shopSettings.opening_hours as Shop["openingHours"],
+      phone: shopSettings.phone ?? "",
+      description: shopSettings.description ?? "",
+      story: shopSettings.story ?? "",
+      teamMembers: shopSettings.teamMembers,
+      lat: shopSettings.lat ?? Number.NaN,
+      lng: shopSettings.lng ?? Number.NaN,
+    };
+  };
 
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
-      const [nextShops, nextProducts] = await Promise.all([fetchShops(), fetchProducts()]);
-      const nextShop =
-        nextShops.find(
-          (s) =>
-            s.id === routeParam ||
-            s.slug === normalizedRouteParam ||
-            toShopSlug(s.name) === normalizedRouteParam
-        ) ?? null;
-      if (cancelled) return;
-      setShop(nextShop);
-      setAllProducts(nextProducts);
+      try {
+        setLoadError(null);
+        let nextShop: Shop | null = null;
+        let nextProducts: Product[] = [];
+
+        if (isPreviewMode) {
+          if (!user?.id || !accessToken) {
+            throw new Error("Connectez-vous pour voir l'aperçu privé de votre boutique.");
+          }
+          const [shopSettings, sellerProducts] = await Promise.all([
+            fetchShopSettings(user.id, accessToken),
+            fetchSellerProducts({ userId: user.id, accessToken }),
+          ]);
+          nextShop = mapPreviewShop(shopSettings);
+          nextProducts = sellerProducts.filter((product) => product.isPublished !== false);
+        } else {
+          const [nextShops, publicProducts] = await Promise.all([fetchShops(), fetchProducts()]);
+          nextShop =
+            nextShops.find(
+              (s) =>
+                s.id === routeParam ||
+                s.slug === normalizedRouteParam ||
+                toShopSlug(s.name) === normalizedRouteParam
+            ) ?? null;
+          nextProducts = publicProducts;
+        }
+
+        if (cancelled) return;
+        setShop(nextShop);
+        setAllProducts(nextProducts);
+      } catch (error) {
+        if (cancelled) return;
+        setShop(null);
+        setAllProducts([]);
+        setLoadError(error instanceof Error ? error.message : "Impossible de charger la boutique.");
+      }
     };
     void run();
     return () => {
       cancelled = true;
     };
-  }, [routeParam, normalizedRouteParam]);
+  }, [routeParam, normalizedRouteParam, isPreviewMode, user?.id, accessToken]);
 
   useEffect(() => {
+    if (isPreviewMode) return;
     if (!shop) return;
     trackLeadEvent({
       type: "view_shop",
       shopId: shop.id,
       metadata: { source: "shop_screen" },
     });
-  }, [shop?.id]);
+  }, [shop?.id, isPreviewMode]);
 
   useEffect(() => {
+    if (isPreviewMode) {
+      setIsFollowing(false);
+      setFollowersCount(0);
+      setNewsItems([]);
+      return;
+    }
     if (!shop?.id) {
       setIsFollowing(false);
       setFollowersCount(0);
@@ -84,19 +159,14 @@ export function ShopScreenNext() {
 
     let cancelled = false;
     const run = async () => {
-      try {
-        const [count, news] = await Promise.all([
-          fetchShopFollowersCount(shop.id),
-          fetchPublicShopNews(shop.id),
-        ]);
-        if (cancelled) return;
-        setFollowersCount(count);
-        setNewsItems(news);
-      } catch {
-        if (cancelled) return;
-        setFollowersCount(0);
-        setNewsItems([]);
-      }
+      const [countResult, newsResult] = await Promise.allSettled([
+        fetchShopFollowersCount(shop.id),
+        fetchPublicShopNews(shop.id),
+      ]);
+      if (cancelled) return;
+
+      setFollowersCount(countResult.status === "fulfilled" ? countResult.value : 0);
+      setNewsItems(newsResult.status === "fulfilled" ? newsResult.value : []);
 
       if (user?.id && accessToken) {
         try {
@@ -118,7 +188,15 @@ export function ShopScreenNext() {
     return () => {
       cancelled = true;
     };
-  }, [shop?.id, user?.id, accessToken]);
+  }, [shop?.id, user?.id, accessToken, isPreviewMode]);
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-4">
+        <p className="text-destructive">{loadError}</p>
+      </div>
+    );
+  }
 
   if (!shop) {
     return (
@@ -208,11 +286,6 @@ export function ShopScreenNext() {
   });
   const hasDetailedSchedule = scheduleRows.some((row) => row.value !== "Fermé");
 
-  const teamMembers = [
-    { name: "Équipe boutique", role: "Accueil & conseil" },
-    { name: "Atelier", role: "Sélection & préparation" },
-  ];
-
   return (
     <div className="min-h-screen flex flex-col bg-background pb-16">
       {/* Hero */}
@@ -275,6 +348,11 @@ export function ShopScreenNext() {
       {/* Content */}
       <div className="flex-1 lg:max-w-5xl lg:mx-auto lg:w-full lg:flex lg:gap-8 lg:py-6 lg:px-8">
         <div className="flex-1">
+          {isPreviewMode && (
+            <div className="mx-4 lg:mx-0 mb-4 rounded-2xl border border-bleu/20 bg-bleu-light px-4 py-3 text-sm text-bleu">
+              Aperçu privé de votre boutique avant publication.
+            </div>
+          )}
           {/* Badges */}
           <div className="flex items-center gap-2 px-4 py-3 lg:px-0 overflow-x-auto">
             {shop.isOpen ? (
@@ -304,46 +382,92 @@ export function ShopScreenNext() {
           </div>
 
           <div className="mx-4 lg:mx-0 bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-4">
-            <h4 className="mb-2">Actualités</h4>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h4>Actualités</h4>
+              {newsItems.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => push(shopNewsHref)}
+                  className="inline-flex items-center gap-1 text-sm text-coral hover:text-coral/80 transition-colors"
+                >
+                  Afficher tout
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              )}
+            </div>
             {newsItems.length === 0 ? (
               <p className="text-sm text-muted-foreground">Aucune actualité publiée.</p>
             ) : (
-              <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-1">
-                {newsItems.map((item) => (
-                  <article
-                    key={item.id}
-                    className="min-w-[260px] max-w-[320px] snap-start rounded-xl border border-border/50 bg-white overflow-hidden"
-                  >
-                    {item.imageUrl ? (
-                      <img src={item.imageUrl} alt={item.title} className="w-full h-32 object-cover" />
-                    ) : (
-                      <div className="w-full h-32 bg-muted" />
-                    )}
-                    <div className="p-3">
-                      <p className="font-semibold mb-1">{item.title}</p>
-                      <p className="text-sm text-muted-foreground line-clamp-3">
-                        {item.description}
-                      </p>
-                    </div>
-                  </article>
-                ))}
-              </div>
+              <Carousel
+                opts={{ align: "start", dragFree: true }}
+                className="px-1 md:px-10"
+              >
+                <CarouselContent className="-ml-3">
+                  {newsItems.map((item) => (
+                    <CarouselItem
+                      key={item.id}
+                      className="pl-3 basis-[85%] sm:basis-[60%] lg:basis-[42%]"
+                    >
+                      <article className="rounded-xl border border-border/50 bg-white overflow-hidden h-full">
+                        {item.imageUrl ? (
+                          <img src={item.imageUrl} alt={item.title} className="w-full h-40 object-cover" />
+                        ) : (
+                          <div className="w-full h-40 bg-muted" />
+                        )}
+                        <div className="p-3">
+                          <p className="font-semibold mb-1">{item.title}</p>
+                          <p className="text-sm text-muted-foreground line-clamp-3">
+                            {item.description}
+                          </p>
+                        </div>
+                      </article>
+                    </CarouselItem>
+                  ))}
+                </CarouselContent>
+                {newsItems.length > 1 && (
+                  <>
+                    <CarouselPrevious className="hidden md:inline-flex left-0 border-border bg-white/95" />
+                    <CarouselNext className="hidden md:inline-flex right-0 border-border bg-white/95" />
+                  </>
+                )}
+              </Carousel>
             )}
           </div>
 
           <div className="mx-4 lg:mx-0 bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-4">
-            <h4 className="mb-2">Équipe & histoire</h4>
-            <p className="text-sm text-muted-foreground mb-3">
-              {shop.name} partage sa sélection locale avec une équipe de passionnés.
+            <h4 className="mb-2">Histoire de la boutique</h4>
+            <p className="text-sm text-muted-foreground whitespace-pre-line">
+              {shop.story?.trim() || `${shop.name} partage sa sélection locale avec ses clients.`}
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {teamMembers.map((member) => (
-                <div key={member.name} className="rounded-xl bg-muted/40 px-3 py-2">
-                  <p className="text-sm">{member.name}</p>
-                  <p className="text-xs text-muted-foreground">{member.role}</p>
-                </div>
-              ))}
-            </div>
+          </div>
+
+          <div className="mx-4 lg:mx-0 bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-4">
+            <h4 className="mb-3">Équipe</h4>
+            {!shop.teamMembers || shop.teamMembers.length === 0 ? (
+              <p className="text-sm text-muted-foreground">L'équipe sera bientôt présentée ici.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {shop.teamMembers.map((member) => (
+                  <div key={`${member.name}-${member.role}`} className="rounded-xl bg-muted/40 px-3 py-3 flex items-center gap-3">
+                    {member.imageUrl ? (
+                      <img
+                        src={member.imageUrl}
+                        alt={member.name}
+                        className="w-14 h-14 rounded-xl object-cover border border-border bg-white flex-shrink-0"
+                      />
+                    ) : (
+                      <div className="w-14 h-14 rounded-xl border border-border bg-white flex items-center justify-center flex-shrink-0">
+                        <UserPlus className="w-5 h-5 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm">{member.name}</p>
+                      <p className="text-xs text-muted-foreground">{member.role || "Équipe boutique"}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* CTAs */}
@@ -444,23 +568,6 @@ export function ShopScreenNext() {
           </div>
         </div>
       </div>
-
-      <BottomNav active="home" onNavigate={(tab) => {
-        if (tab === "home") push("/home");
-        if (tab === "cart") push("/cart");
-        if (tab === "messages") push("/messages");
-        if (tab === "profile") {
-          if (!isAuthenticated) {
-            push("/auth");
-            return;
-          }
-          if (user?.role === "seller") {
-            push(user.siretVerified ? "/dashboard" : "/siret");
-            return;
-          }
-          push("/profile");
-        }
-      }} />
     </div>
   );
 }

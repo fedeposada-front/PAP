@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "../src/styles/index.css";
 import { AppProviders } from "./providers";
+import { AppBottomNav } from "../src/app/components/AppBottomNav";
 
 export const metadata: Metadata = {
   title: "MonCadeauLocal",
@@ -15,7 +16,12 @@ export default function RootLayout({
   return (
     <html lang="fr">
       <body>
-        <AppProviders>{children}</AppProviders>
+        <AppProviders>
+          <div className="pb-16 lg:pb-0">
+            {children}
+          </div>
+          <AppBottomNav />
+        </AppProviders>
       </body>
     </html>
   );

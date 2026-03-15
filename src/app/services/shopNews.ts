@@ -11,6 +11,14 @@ export interface ShopNewsItem {
   createdAt: string;
 }
 
+export interface FeedNewsItem extends ShopNewsItem {
+  shopName: string;
+  shopSlug: string;
+  shopImageUrl: string;
+  likeCount: number;
+  likedByMe: boolean;
+}
+
 interface ShopNewsRow {
   id: string;
   shop_id: string;
@@ -25,8 +33,36 @@ interface SellerShopRow {
   id: string;
 }
 
+interface FeedShopRow {
+  id: string;
+  name: string;
+  logo_image_url: string | null;
+}
+
+interface NewsLikeRow {
+  news_id: string;
+  user_id: string;
+}
+
 function hasSupabaseConfig() {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+}
+
+function toShopSlug(name: string): string {
+  const normalized = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_");
+
+  return normalized || "boutique";
+}
+
+function encodeInList(values: string[]): string {
+  return values.map((value) => `"${value}"`).join(",");
 }
 
 function mapNews(row: ShopNewsRow): ShopNewsItem {
@@ -105,6 +141,71 @@ export async function fetchPublicShopNews(shopId: string): Promise<ShopNewsItem[
   return rows.map(mapNews);
 }
 
+export async function fetchPublicShopNewsItem(params: {
+  shopId: string;
+  newsId: string;
+}): Promise<ShopNewsItem | null> {
+  if (!hasSupabaseConfig()) return null;
+  const rows = await requestSupabaseAnon<ShopNewsRow[]>(
+    `shop_news?id=eq.${params.newsId}&shop_id=eq.${params.shopId}&is_published=eq.true&select=id,shop_id,title,description,image_url,is_published,created_at&limit=1`
+  );
+  return rows[0] ? mapNews(rows[0]) : null;
+}
+
+export async function fetchNewsFeed(params?: {
+  accessToken?: string | null;
+  userId?: string | null;
+}): Promise<FeedNewsItem[]> {
+  if (!hasSupabaseConfig()) return [];
+
+  const newsRows = await requestSupabaseAnon<ShopNewsRow[]>(
+    "shop_news?is_published=eq.true&select=id,shop_id,title,description,image_url,is_published,created_at&order=created_at.desc"
+  );
+  if (newsRows.length === 0) return [];
+
+  const shopIds = [...new Set(newsRows.map((row) => row.shop_id))];
+  const newsIds = newsRows.map((row) => row.id);
+
+  const [shopRows, likeRows, likedRows] = await Promise.all([
+    requestSupabaseAnon<FeedShopRow[]>(
+      `shops?id=in.(${encodeInList(shopIds)})&select=id,name,logo_image_url`
+    ),
+    requestSupabaseAnon<NewsLikeRow[]>(
+      `shop_news_likes?news_id=in.(${encodeInList(newsIds)})&select=news_id,user_id`
+    ),
+    params?.accessToken && params.userId
+      ? requestSupabaseAuth<NewsLikeRow[]>(
+          `shop_news_likes?news_id=in.(${encodeInList(newsIds)})&user_id=eq.${params.userId}&select=news_id,user_id`,
+          { method: "GET" },
+          params.accessToken
+        )
+      : Promise.resolve([] as NewsLikeRow[]),
+  ]);
+
+  const shopById = new Map(shopRows.map((shop) => [shop.id, shop]));
+  const likeCountByNewsId = new Map<string, number>();
+  for (const row of likeRows) {
+    likeCountByNewsId.set(row.news_id, (likeCountByNewsId.get(row.news_id) ?? 0) + 1);
+  }
+  const likedByMe = new Set(likedRows.map((row) => row.news_id));
+
+  return newsRows
+    .map((row) => {
+      const shop = shopById.get(row.shop_id);
+      if (!shop) return null;
+      const item = mapNews(row);
+      return {
+        ...item,
+        shopName: shop.name,
+        shopSlug: toShopSlug(shop.name),
+        shopImageUrl: shop.logo_image_url ?? item.imageUrl,
+        likeCount: likeCountByNewsId.get(row.id) ?? 0,
+        likedByMe: likedByMe.has(row.id),
+      } satisfies FeedNewsItem;
+    })
+    .filter((item): item is FeedNewsItem => Boolean(item));
+}
+
 export async function fetchSellerShopNews(params: {
   userId: string;
   accessToken: string;
@@ -164,6 +265,67 @@ export async function updateSellerShopNewsPublishStatus(params: {
       body: JSON.stringify({
         is_published: params.isPublished,
       }),
+    },
+    params.accessToken
+  );
+}
+
+export async function updateSellerShopNews(params: {
+  newsId: string;
+  accessToken: string;
+  title: string;
+  description: string;
+  imageUrl: string;
+}): Promise<void> {
+  if (!hasSupabaseConfig()) {
+    throw new Error("Configuration Supabase manquante.");
+  }
+  await requestSupabaseAuth(
+    `shop_news?id=eq.${params.newsId}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        title: params.title.trim(),
+        description: params.description.trim() || null,
+        image_url: params.imageUrl.trim() || null,
+      }),
+    },
+    params.accessToken
+  );
+}
+
+export async function likeShopNews(params: {
+  newsId: string;
+  userId: string;
+  accessToken: string;
+}): Promise<void> {
+  if (!hasSupabaseConfig()) return;
+  await requestSupabaseAuth(
+    "shop_news_likes",
+    {
+      method: "POST",
+      headers: { Prefer: "return=minimal,resolution=merge-duplicates" },
+      body: JSON.stringify([{
+        news_id: params.newsId,
+        user_id: params.userId,
+      }]),
+    },
+    params.accessToken
+  );
+}
+
+export async function unlikeShopNews(params: {
+  newsId: string;
+  userId: string;
+  accessToken: string;
+}): Promise<void> {
+  if (!hasSupabaseConfig()) return;
+  await requestSupabaseAuth(
+    `shop_news_likes?news_id=eq.${params.newsId}&user_id=eq.${params.userId}`,
+    {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
     },
     params.accessToken
   );
