@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Shop } from "../types/catalog";
 
 interface ShopMapProps {
@@ -8,10 +8,36 @@ interface ShopMapProps {
   onShopClick: (shop: Shop) => void;
   className?: string;
   center?: [number, number];
+  userLocation?: [number, number];
   cityLabel?: string;
+  onCenterChange?: (center: [number, number]) => void;
 }
 
 const CENTER: [number, number] = [49.8941, 2.2958];
+
+async function geocodeShop(shop: Shop): Promise<[number, number] | null> {
+  const query = [shop.address?.trim(), shop.city?.trim()].filter(Boolean).join(" ");
+  if (!query) return null;
+
+  try {
+    const response = await fetch(
+      `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=1`
+    );
+    if (!response.ok) return null;
+
+    const payload = (await response.json()) as {
+      features?: Array<{ geometry?: { coordinates?: [number, number] } }>;
+    };
+    const coords = payload.features?.[0]?.geometry?.coordinates;
+    if (!coords || coords.length < 2) return null;
+
+    const [lng, lat] = coords;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return [lat, lng];
+  } catch {
+    return null;
+  }
+}
 
 function createShopIcon(L: any, isOpen: boolean) {
   const color = isOpen ? "#EB7276" : "#9ca3af";
@@ -65,7 +91,7 @@ function createUserIcon(L: any) {
   });
 }
 
-export function ShopMap({ shops, onShopClick, className = "", center, cityLabel }: ShopMapProps) {
+export function ShopMap({ shops, onShopClick, className = "", center, userLocation, cityLabel, onCenterChange }: ShopMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any>(null);
@@ -73,12 +99,58 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
   const leafletRef = useRef<any>(null);
   const shopsRef = useRef<Shop[]>(shops);
   const onShopClickRef = useRef(onShopClick);
+  const onCenterChangeRef = useRef(onCenterChange);
+  const previousCenterRef = useRef<[number, number]>(center ?? CENTER);
+  const geocodeCacheRef = useRef<Map<string, [number, number] | null>>(new Map());
+  const [resolvedShops, setResolvedShops] = useState<Shop[]>(shops);
   onShopClickRef.current = onShopClick;
+  onCenterChangeRef.current = onCenterChange;
   shopsRef.current = shops;
 
   const mapCenter = center ?? CENTER;
+  const markerPosition = userLocation ?? center ?? CENTER;
   const centerLat = mapCenter[0];
   const centerLng = mapCenter[1];
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      const nextShops = await Promise.all(
+        shops.map(async (shop) => {
+          if (Number.isFinite(shop.lat) && Number.isFinite(shop.lng)) {
+            return shop;
+          }
+
+          const cacheKey = `${shop.id}:${shop.address}:${shop.city}`;
+          if (geocodeCacheRef.current.has(cacheKey)) {
+            const cached = geocodeCacheRef.current.get(cacheKey);
+            if (!cached) return shop;
+            return { ...shop, lat: cached[0], lng: cached[1] };
+          }
+
+          const geocoded = await geocodeShop(shop);
+          geocodeCacheRef.current.set(cacheKey, geocoded);
+          if (!geocoded) return shop;
+
+          return {
+            ...shop,
+            lat: geocoded[0],
+            lng: geocoded[1],
+          };
+        })
+      );
+
+      if (!cancelled) {
+        setResolvedShops(nextShops);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [shops]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -104,7 +176,7 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
           '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
       }).addTo(map);
 
-      const userMarker = L.marker(mapCenter, { icon: createUserIcon(L) })
+      const userMarker = L.marker(markerPosition, { icon: createUserIcon(L) })
         .addTo(map)
         .bindPopup(
           `<div style="text-align:center;padding:2px 4px;">
@@ -116,6 +188,13 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
       userMarkerRef.current = userMarker;
       markersRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
+
+      map.on("moveend", () => {
+        const current = map.getCenter();
+        const nextCenter: [number, number] = [current.lat, current.lng];
+        previousCenterRef.current = nextCenter;
+        onCenterChangeRef.current?.(nextCenter);
+      });
 
       containerRef.current.addEventListener("click", (e) => {
         const target = (e.target as HTMLElement).closest("[data-shop-id]") as HTMLElement | null;
@@ -150,18 +229,31 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
 
   useEffect(() => {
     const map = mapRef.current;
-    const userMarker = userMarkerRef.current;
-    if (!map || !userMarker) return;
+    if (!map) return;
 
-    map.setView(mapCenter, 14);
-    userMarker.setLatLng(mapCenter);
+    const [prevLat, prevLng] = previousCenterRef.current;
+    const hasMeaningfulChange =
+      Math.abs(prevLat - centerLat) > 0.0001 ||
+      Math.abs(prevLng - centerLng) > 0.0001;
+
+    if (hasMeaningfulChange) {
+      map.setView(mapCenter, map.getZoom());
+      previousCenterRef.current = mapCenter;
+    }
+  }, [centerLat, centerLng, cityLabel]);
+
+  useEffect(() => {
+    const userMarker = userMarkerRef.current;
+    if (!userMarker) return;
+
+    userMarker.setLatLng(markerPosition);
     userMarker.setPopupContent(
       `<div style="text-align:center;padding:2px 4px;">
         <strong>Vous êtes ici</strong><br/>
         <span style="font-size:12px;color:#6b7280;">${cityLabel ?? "Amiens"}</span>
       </div>`
     );
-  }, [centerLat, centerLng, cityLabel]);
+  }, [markerPosition, cityLabel]);
 
   useEffect(() => {
     const L = leafletRef.current;
@@ -170,9 +262,9 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
     if (!L || !map || !markersGroup) return;
 
     markersGroup.clearLayers();
-    if (shops.length === 0) return;
+    if (resolvedShops.length === 0) return;
 
-    shops.forEach((shop, index) => {
+    resolvedShops.forEach((shop, index) => {
       if (!Number.isFinite(shop.lat) || !Number.isFinite(shop.lng)) return;
 
       const isOverlappingUser =
@@ -218,14 +310,33 @@ export function ShopMap({ shops, onShopClick, className = "", center, cityLabel 
       markersGroup.addLayer(marker);
     });
 
-    map.setView(mapCenter, 14);
-  }, [shops, centerLat, centerLng]);
+  }, [resolvedShops, centerLat, centerLng]);
 
   return (
-    <div
-      ref={containerRef}
-      className={className}
-      style={{ width: "100%", height: "100%", minHeight: "300px" }}
-    />
+    <div className="relative h-full w-full">
+      <div
+        ref={containerRef}
+        className={className}
+        style={{ width: "100%", height: "100%", minHeight: "300px" }}
+      />
+      <div className="absolute right-4 top-4 z-[500] flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={() => mapRef.current?.zoomIn()}
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-white/95 text-xl text-foreground shadow-sm backdrop-blur hover:bg-white"
+          aria-label="Zoom avant"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={() => mapRef.current?.zoomOut()}
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-white/95 text-xl text-foreground shadow-sm backdrop-blur hover:bg-white"
+          aria-label="Zoom arrière"
+        >
+          -
+        </button>
+      </div>
+    </div>
   );
 }

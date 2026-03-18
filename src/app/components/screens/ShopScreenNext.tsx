@@ -18,7 +18,7 @@ import { useEffect, useState } from "react";
 import { Button, Badge, ProductCard, Header } from "../ds";
 import { useAuth } from "../AuthContext";
 import { trackLeadEvent } from "../../services/leadEvents";
-import { fetchProducts, fetchShops } from "../../services/catalog";
+import { fetchProductsByShopId, fetchShopById, fetchShops } from "../../services/catalog";
 import type { Product, Shop } from "../../types/catalog";
 import { toShopSlug } from "../../utils/shopRouting";
 import { getCategoryLabel } from "../../data/catalog";
@@ -50,6 +50,7 @@ export function ShopScreenNext() {
   const [shop, setShop] = useState<Shop | null>(null);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const shopProducts = shop ? allProducts.filter((p) => p.shopId === shop.id) : [];
   const shopNewsHref = shop ? `/shop/${encodeURIComponent(shop.slug ?? toShopSlug(shop.name))}/news` : "";
   const [liked, setLiked] = useState(false);
@@ -87,10 +88,13 @@ export function ShopScreenNext() {
     };
   };
 
+  const isLikelyShopId = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
       try {
+        setIsLoading(true);
         setLoadError(null);
         let nextShop: Shop | null = null;
         let nextProducts: Product[] = [];
@@ -106,15 +110,20 @@ export function ShopScreenNext() {
           nextShop = mapPreviewShop(shopSettings);
           nextProducts = sellerProducts.filter((product) => product.isPublished !== false);
         } else {
-          const [nextShops, publicProducts] = await Promise.all([fetchShops(), fetchProducts()]);
-          nextShop =
-            nextShops.find(
-              (s) =>
-                s.id === routeParam ||
-                s.slug === normalizedRouteParam ||
-                toShopSlug(s.name) === normalizedRouteParam
-            ) ?? null;
-          nextProducts = publicProducts;
+          if (isLikelyShopId(routeParam)) {
+            nextShop = await fetchShopById(routeParam);
+          } else {
+            const nextShops = await fetchShops();
+            nextShop =
+              nextShops.find(
+                (s) =>
+                  s.id === routeParam ||
+                  s.slug === normalizedRouteParam ||
+                  toShopSlug(s.name) === normalizedRouteParam
+              ) ?? null;
+          }
+
+          nextProducts = nextShop ? await fetchProductsByShopId(nextShop.id) : [];
         }
 
         if (cancelled) return;
@@ -125,6 +134,8 @@ export function ShopScreenNext() {
         setShop(null);
         setAllProducts([]);
         setLoadError(error instanceof Error ? error.message : "Impossible de charger la boutique.");
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
     };
     void run();
@@ -160,7 +171,7 @@ export function ShopScreenNext() {
     let cancelled = false;
     const run = async () => {
       const [countResult, newsResult] = await Promise.allSettled([
-        fetchShopFollowersCount(shop.id),
+        fetchShopFollowersCount(shop.id, accessToken),
         fetchPublicShopNews(shop.id),
       ]);
       if (cancelled) return;
@@ -194,6 +205,14 @@ export function ShopScreenNext() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background px-4">
         <p className="text-destructive">{loadError}</p>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-4">
+        <p className="text-muted-foreground">Chargement de la boutique...</p>
       </div>
     );
   }

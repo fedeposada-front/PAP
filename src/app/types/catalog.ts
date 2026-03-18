@@ -34,11 +34,14 @@ export interface Shop {
 export interface Product {
   id: string;
   shopId: string;
+  collectionId?: string;
   shopName: string;
   title: string;
   price: number;
   image: string;
+  imageUrls?: string[];
   category: string;
+  categories?: string[];
   availableToday: boolean;
   stock: number;
   description: string;

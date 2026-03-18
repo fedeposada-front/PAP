@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { getPasswordRuleMessage } from "../utils/passwordRules";
+import { backfillSellerShopCoordinatesIfMissing } from "../services/shopSettings";
 
 type Role = "buyer" | "seller";
 
@@ -290,6 +291,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     setUser(hydratedUser);
+    if (hydratedUser.role === "seller" && hydratedUser.siretVerified) {
+      void backfillSellerShopCoordinatesIfMissing(hydratedUser.id, accessToken).catch(() => {
+        // Do not block auth if coordinates cannot be backfilled.
+      });
+    }
     return hydratedUser;
   };
 
@@ -473,6 +479,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
 
     setUser((prev) => (prev ? { ...prev, role } : prev));
+    if (role === "seller" && user?.id && session?.access_token) {
+      void backfillSellerShopCoordinatesIfMissing(user.id, session.access_token).catch(() => {
+        // Do not block role switch if coordinates cannot be backfilled.
+      });
+    }
   };
 
   const verifySiret: AuthContextType["verifySiret"] = async ({

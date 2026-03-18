@@ -74,6 +74,7 @@ export function HomeScreenNext() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [mapCenter, setMapCenter] = useState<[number, number]>([location.lat, location.lng]);
 
   const toKmDistance = (fromLat: number, fromLng: number, toLat: number, toLng: number) => {
     const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -88,6 +89,10 @@ export function HomeScreenNext() {
     return earthKm * c;
   };
 
+  useEffect(() => {
+    setMapCenter([location.lat, location.lng]);
+  }, [location.lat, location.lng]);
+
   const shopsWithDistance = useMemo(() => {
     return shops.map((shop) => {
       const hasCoords = Number.isFinite(shop.lat) && Number.isFinite(shop.lng);
@@ -96,9 +101,10 @@ export function HomeScreenNext() {
       if (!hasCoords && sameCity) {
         return {
           ...shop,
-          lat: location.lat,
-          lng: location.lng,
+          lat: mapCenter[0],
+          lng: mapCenter[1],
           distance: "<1 km",
+          distanceKm: 0,
         };
       }
 
@@ -106,27 +112,59 @@ export function HomeScreenNext() {
         return {
           ...shop,
           distance: shop.city || "-",
+          distanceKm: Number.POSITIVE_INFINITY,
         };
       }
-      const km = toKmDistance(location.lat, location.lng, shop.lat, shop.lng);
+      const km = toKmDistance(mapCenter[0], mapCenter[1], shop.lat, shop.lng);
       return {
         ...shop,
         distance: `${km < 1 ? "<1" : km.toFixed(1)} km`,
+        distanceKm: km,
       };
     });
-  }, [shops, location.lat, location.lng, location.cityName]);
+  }, [shops, mapCenter, location.cityName]);
 
-  const filteredShops = shopsWithDistance.filter((s) => {
-    if (!matchesCategoryFilter(s.category, activeCategory)) return false;
-    if (filters.openNow && !s.isOpen) return false;
-    if (filters.pickupToday && !s.pickupToday) return false;
-    if (filters.sunday && !s.openSunday) return false;
-    if (filters.delivery && !s.delivery) return false;
-    return true;
-  });
+  const filteredShopsBase = useMemo(() => {
+    return shopsWithDistance.filter((s) => {
+      if (!matchesCategoryFilter(s.category, activeCategory)) return false;
+      if (filters.openNow && !s.isOpen) return false;
+      if (filters.pickupToday && !s.pickupToday) return false;
+      if (filters.sunday && !s.openSunday) return false;
+      if (filters.delivery && !s.delivery) return false;
+      return true;
+    });
+  }, [shopsWithDistance, activeCategory, filters]);
 
+  const filteredShops = useMemo(() => {
+    const sorted = [...filteredShopsBase].sort((a, b) => {
+      const aDistance = "distanceKm" in a && typeof a.distanceKm === "number" ? a.distanceKm : Number.POSITIVE_INFINITY;
+      const bDistance = "distanceKm" in b && typeof b.distanceKm === "number" ? b.distanceKm : Number.POSITIVE_INFINITY;
+      return aDistance - bDistance;
+    });
+
+    const nearby = sorted.filter((shop) => {
+      const distanceKm = "distanceKm" in shop && typeof shop.distanceKm === "number" ? shop.distanceKm : Number.POSITIVE_INFINITY;
+      return distanceKm <= 40;
+    });
+
+    return nearby.length > 0 ? nearby : sorted.slice(0, 24);
+  }, [filteredShopsBase]);
+
+  const visibleShopIds = new Set(filteredShops.map((shop) => shop.id));
+  const shopDistanceById = useMemo(
+    () =>
+      new Map(
+        filteredShops.map((shop) => [
+          shop.id,
+          "distanceKm" in shop && typeof shop.distanceKm === "number" ? shop.distanceKm : Number.POSITIVE_INFINITY,
+        ])
+      ),
+    [filteredShops]
+  );
   const filteredProducts = products.filter((p) => {
-    if (!matchesCategoryFilter(p.category, activeCategory)) return false;
+    if (!visibleShopIds.has(p.shopId)) return false;
+    const productCategories = p.categories && p.categories.length > 0 ? p.categories : [p.category];
+    if (!productCategories.some((categoryId) => matchesCategoryFilter(categoryId, activeCategory))) return false;
     if (filters.pickupToday && !p.availableToday) return false;
     if (filters.delivery && !p.delivery) return false;
     return true;
@@ -134,12 +172,14 @@ export function HomeScreenNext() {
 
   // Recently added products sorted by addedAt descending
   const recentProducts = useMemo(() => {
-    return [...filteredProducts].sort(
-      (a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime()
-    );
-  }, [filteredProducts]);
-
-  const mapCenter: [number, number] = [location.lat, location.lng];
+    return [...filteredProducts].sort((a, b) => {
+      const distanceDelta =
+        (shopDistanceById.get(a.shopId) ?? Number.POSITIVE_INFINITY) -
+        (shopDistanceById.get(b.shopId) ?? Number.POSITIVE_INFINITY);
+      if (distanceDelta !== 0) return distanceDelta;
+      return new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime();
+    });
+  }, [filteredProducts, shopDistanceById]);
 
   const activeCat =
     CATEGORY_GROUPS_WITH_ALL.find((c) => c.id === activeCategory) ?? CATEGORY_GROUPS_WITH_ALL[0];
@@ -171,7 +211,7 @@ export function HomeScreenNext() {
         setLoadError(null);
         const [nextShops, nextProducts] = await Promise.all([
           fetchShops(),
-          fetchProducts(),
+          fetchProducts({ limit: 60, lightweight: true }),
         ]);
         if (cancelled) return;
         setShops(nextShops);
@@ -475,7 +515,9 @@ export function HomeScreenNext() {
                     shops={filteredShops}
                     onShopClick={(shop) => navigate(getShopHref(shop))}
                     center={mapCenter}
+                    userLocation={[location.lat, location.lng]}
                     cityLabel={location.cityName}
+                    onCenterChange={setMapCenter}
                   />
                 </div>
               </div>
@@ -554,7 +596,9 @@ export function HomeScreenNext() {
                   shops={filteredShops}
                   onShopClick={(shop) => navigate(getShopHref(shop))}
                   center={mapCenter}
+                  userLocation={[location.lat, location.lng]}
                   cityLabel={location.cityName}
+                  onCenterChange={setMapCenter}
                 />
               </div>
 

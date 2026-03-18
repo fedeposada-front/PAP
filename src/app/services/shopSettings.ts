@@ -254,6 +254,53 @@ async function fetchShopSettingsById(shopId: string, accessToken: string): Promi
   }
 }
 
+async function ensureShopCoordinates(shop: ShopSettingsData, accessToken: string): Promise<ShopSettingsData> {
+  const hasCoords = Number.isFinite(shop.lat) && Number.isFinite(shop.lng);
+  if (hasCoords) return shop;
+
+  const address = shop.address?.trim() || "";
+  const city = shop.city?.trim() || "";
+  const postalCode = shop.postal_code?.trim() || "";
+  if (!address) return shop;
+
+  const coords = await geocodeShopAddress({
+    address,
+    city,
+    postalCode,
+  });
+  if (!coords) return shop;
+
+  await requestSupabase(
+    `shops?id=eq.${shop.id}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        lat: coords.lat,
+        lng: coords.lng,
+      }),
+    },
+    accessToken
+  );
+
+  return {
+    ...shop,
+    lat: coords.lat,
+    lng: coords.lng,
+  };
+}
+
+export async function backfillSellerShopCoordinatesIfMissing(userId: string, accessToken: string): Promise<void> {
+  if (!hasSupabaseConfig()) return;
+  const lookup = await fetchOwnedShopLookup(userId, accessToken);
+  if (!lookup?.id) return;
+
+  const shop = await fetchShopSettingsById(lookup.id, accessToken);
+  if (!shop) return;
+
+  await ensureShopCoordinates(shop, accessToken);
+}
+
 async function getOrCreateShop(userId: string, accessToken: string): Promise<ShopSettingsData> {
   const existingLookup = await fetchOwnedShopLookup(userId, accessToken);
   if (existingLookup?.id) {

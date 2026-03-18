@@ -16,11 +16,11 @@ import {
   Trash2,
   Power,
   Newspaper,
+  Users,
 } from "lucide-react";
 import { getLeadStats } from "../../services/leadEvents";
 import {
   deleteSellerProduct,
-  duplicateSellerProduct,
   fetchSellerProducts,
   updateSellerProductPublishStatus,
 } from "../../services/sellerProducts";
@@ -35,6 +35,7 @@ import {
   updateSellerShopNews,
   updateSellerShopNewsPublishStatus,
 } from "../../services/shopNews";
+import { fetchShopFollowers, fetchShopFollowersCount, type ShopFollowerItem } from "../../services/shopFollowers";
 
 export function DashboardScreenNext() {
   const router = useRouter();
@@ -57,17 +58,21 @@ export function DashboardScreenNext() {
   const [isSavingTeam, setIsSavingTeam] = useState(false);
   const [teamMessage, setTeamMessage] = useState<string | null>(null);
   const [shopPublished, setShopPublished] = useState(false);
+  const [shopId, setShopId] = useState<string | null>(null);
+  const [followersCount, setFollowersCount] = useState(0);
+  const [followers, setFollowers] = useState<ShopFollowerItem[]>([]);
+  const [isLoadingFollowers, setIsLoadingFollowers] = useState(false);
   const fullName = `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim();
   const displayName = user?.shopName || fullName || "Votre boutique";
   const publicShopHref = getShopHref({
-    id: user?.id ?? "seller",
+    id: shopId ?? user?.id ?? "seller",
     name: displayName,
   });
   const previewShopHref = `${publicShopHref}?preview=1`;
 
   const leadStats = useMemo(
-    () => getLeadStats({ shopId: user?.id ?? "seller", sinceDays: 30 }),
-    [user?.id]
+    () => getLeadStats({ shopId: shopId ?? "seller", sinceDays: 30 }),
+    [shopId]
   );
 
   useEffect(() => {
@@ -139,6 +144,7 @@ export function DashboardScreenNext() {
     if (!user?.id || !accessToken || !user?.siretVerified) {
       setTeamMembers([]);
       setShopPublished(false);
+      setShopId(null);
       return;
     }
     let cancelled = false;
@@ -148,11 +154,13 @@ export function DashboardScreenNext() {
         if (!cancelled) {
           setTeamMembers(shop?.teamMembers ?? []);
           setShopPublished(Boolean(shop?.is_published));
+          setShopId(shop?.id ?? null);
         }
       } catch {
         if (!cancelled) {
           setTeamMembers([]);
           setShopPublished(false);
+          setShopId(null);
         }
       }
     };
@@ -161,6 +169,52 @@ export function DashboardScreenNext() {
       cancelled = true;
     };
   }, [user?.id, user?.siretVerified, accessToken]);
+
+  useEffect(() => {
+    if (!shopId || !accessToken) {
+      setFollowersCount(0);
+      setFollowers([]);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingFollowers(true);
+    const run = async () => {
+      try {
+        const [count, nextFollowers] = await Promise.all([
+          fetchShopFollowersCount(shopId, accessToken),
+          fetchShopFollowers({ shopId, accessToken }),
+        ]);
+        if (!cancelled) {
+          setFollowersCount(count);
+          setFollowers(nextFollowers);
+        }
+      } catch {
+        if (!cancelled) {
+          setFollowersCount(0);
+          setFollowers([]);
+        }
+      } finally {
+        if (!cancelled) setIsLoadingFollowers(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [shopId, accessToken]);
+
+  const formatFollowerDate = (value: string | null) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return new Intl.DateTimeFormat("fr-FR", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }).format(date);
+  };
 
   if (!user || !user.siretVerified) {
     return null;
@@ -240,36 +294,19 @@ export function DashboardScreenNext() {
   };
 
   const handleDuplicateProduct = (product: Product) => {
-    const run = async () => {
-      if (!user?.id || !accessToken) return;
-      const suggestedColor = product.color?.trim() || "";
-      const nextColor = typeof window !== "undefined"
-        ? window.prompt("Nouvelle couleur pour la copie du produit :", suggestedColor)
-        : null;
-      if (nextColor === null) return;
-      if (!nextColor.trim()) {
-        setProductActionMessage("Duplication annulée: couleur requise.");
-        return;
-      }
+    push(`/add-product?duplicate=${encodeURIComponent(product.id)}`);
+  };
 
-      setActingProductId(product.id);
-      setProductActionMessage(null);
-      try {
-        await duplicateSellerProduct({
-          userId: user.id,
-          accessToken,
-          product,
-          color: nextColor,
-        });
-        await refreshProducts();
-        setProductActionMessage("Produit dupliqué.");
-      } catch (error) {
-        setProductActionMessage(error instanceof Error ? error.message : "Duplication impossible.");
-      } finally {
-        setActingProductId(null);
-      }
-    };
-    void run();
+  const handleEditProduct = (product: Product) => {
+    push(`/add-product?edit=${encodeURIComponent(product.id)}`);
+  };
+
+  const handlePreviewProduct = (product: Product) => {
+    if (typeof window === "undefined") return;
+    const href = product.isPublished
+      ? `/product/${encodeURIComponent(product.id)}`
+      : `/product/${encodeURIComponent(product.id)}?preview=1`;
+    window.open(href, "_blank", "noopener,noreferrer");
   };
 
   const resetNewsForm = () => {
@@ -495,8 +532,11 @@ export function DashboardScreenNext() {
               Parametres
             </button>
             <button
-              onClick={() => push(publicShopHref)}
-              className="h-9 px-3 rounded-full bg-green-light inline-flex items-center gap-1.5 max-w-[220px] hover:bg-green-light/80 transition-colors"
+onClick={() => {
+                  if (typeof window !== "undefined") {
+                    window.open(previewShopHref, "_blank", "noopener,noreferrer");
+                  }
+                }}              className="h-9 px-3 rounded-full bg-green-light inline-flex items-center gap-1.5 max-w-[220px] hover:bg-green-light/80 transition-colors"
               title={displayName}
             >
               <Store className="w-4 h-4 text-green flex-shrink-0" />
@@ -523,7 +563,7 @@ export function DashboardScreenNext() {
           </Button>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
           <StatCard
             icon="💰"
             label="Ventes ce mois"
@@ -544,6 +584,44 @@ export function DashboardScreenNext() {
             label="Messages"
             value={String(leadStats.clickMessage)}
           />
+          <StatCard
+            icon="👥"
+            label="Abonnés"
+            value={String(followersCount)}
+          />
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Users className="w-4 h-4 text-green" />
+            <h4>Suivi de l'entreprise</h4>
+          </div>
+          <p className="text-sm text-muted-foreground mb-3">
+            {followersCount === 0 ? "Aucun client ne suit encore votre boutique." : `${followersCount} client${followersCount > 1 ? "s" : ""} suivent votre boutique.`}
+          </p>
+          {isLoadingFollowers && (
+            <p className="text-sm text-muted-foreground">Chargement...</p>
+          )}
+          {!isLoadingFollowers && followers.length === 0 && (
+            <p className="text-sm text-muted-foreground">Le suivi apparaîtra ici dès les premiers abonnements.</p>
+          )}
+          {!isLoadingFollowers && followers.length > 0 && (
+            <div className="space-y-2">
+              {followers.slice(0, 8).map((follower) => (
+                <div key={`${follower.userId}-${follower.followedAt ?? "na"}`} className="flex items-center justify-between rounded-xl bg-muted/40 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate">{follower.displayName}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {follower.followedAt ? `Suit la boutique depuis le ${formatFollowerDate(follower.followedAt)}` : "Client abonné"}
+                    </p>
+                  </div>
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-sm text-muted-foreground border border-border">
+                    {follower.displayName.charAt(0).toUpperCase()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-6">
@@ -604,15 +682,21 @@ export function DashboardScreenNext() {
                     </div>
                     <div className="flex items-center gap-1">
                       <button
+                        onClick={() => handlePreviewProduct(product)}
+                        className="w-8 h-8 rounded-md bg-white border border-border hover:bg-muted flex items-center justify-center"
+                        title={product.isPublished ? "Voir la fiche produit" : "Voir l'aperçu privé"}
+                      >
+                        <Eye className="w-4 h-4 text-muted-foreground" />
+                      </button>
+                      <button
                         onClick={() => handleDuplicateProduct(product)}
-                        disabled={actingProductId === product.id}
-                        className="w-8 h-8 rounded-md bg-white border border-border hover:bg-muted disabled:opacity-50 flex items-center justify-center"
+                        className="w-8 h-8 rounded-md bg-white border border-border hover:bg-muted flex items-center justify-center"
                         title="Dupliquer"
                       >
                         <Copy className="w-4 h-4 text-muted-foreground" />
                       </button>
                       <button
-                        onClick={() => push(`/product/${product.id}`)}
+                        onClick={() => handleEditProduct(product)}
                         className="w-8 h-8 rounded-md bg-white border border-border hover:bg-muted flex items-center justify-center"
                         title="Modifier"
                       >

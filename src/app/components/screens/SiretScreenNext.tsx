@@ -144,7 +144,15 @@ export function SiretScreenNext() {
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Impossible de finaliser la vérification.";
-        if (message.includes("siret_number") || message.includes("siret_verified")) {
+        const normalizedMessage = message.toLowerCase();
+        if (
+          normalizedMessage.includes("duplicate key") ||
+          normalizedMessage.includes("uniq_profiles_siret_number") ||
+          normalizedMessage.includes("siret déjà utilisé") ||
+          normalizedMessage.includes("siret deja utilise")
+        ) {
+          setErrorMessage("Ce SIRET est déjà utilisé par un autre compte.");
+        } else if (message.includes("siret_number") || message.includes("siret_verified")) {
           setErrorMessage(
             "La base Supabase n'est pas à jour. Rejoue `supabase/schema.sql` puis réessaie."
           );

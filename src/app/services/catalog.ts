@@ -58,6 +58,7 @@ function mapTeamMembers(value: unknown): ShopTeamMember[] {
 interface ProductRow {
   id: string;
   shop_id: string;
+  collection_id?: string | null;
   title: string;
   description: string | null;
   features: string | null;
@@ -67,6 +68,9 @@ interface ProductRow {
   colors: string[] | null;
   price: number;
   image_url: string | null;
+  main_image_url?: string | null;
+  image_urls?: string[] | null;
+  categories: string[] | null;
   category: string;
   available_today: boolean;
   stock: number;
@@ -92,6 +96,10 @@ function isSchemaColumnError(message: string, columns: string[]) {
     }) ||
     /schema cache/i.test(message)
   );
+}
+
+function isStatementTimeoutError(message: string) {
+  return /statement timeout|canceling statement due to statement timeout/i.test(message);
 }
 
 function isValidTime(value: string) {
@@ -190,11 +198,14 @@ function mapProduct(row: ProductRow, shopName: string): Product {
   return {
     id: row.id,
     shopId: row.shop_id,
+    collectionId: row.collection_id ?? undefined,
     shopName,
     title: row.title,
     price: Number(row.price),
-    image: row.image_url ?? FALLBACK_IMAGE,
+    image: row.image_url ?? row.main_image_url ?? FALLBACK_IMAGE,
+    imageUrls: Array.isArray(row.image_urls) ? row.image_urls.filter(Boolean) : (row.image_url ? [row.image_url] : []),
     category: row.category,
+    categories: Array.isArray(row.categories) ? row.categories.filter(Boolean) : [row.category].filter(Boolean),
     availableToday: row.available_today,
     stock: row.stock,
     description: row.description ?? "",
@@ -235,15 +246,57 @@ export async function fetchShops(): Promise<Shop[]> {
   }
 }
 
-export async function fetchProducts(): Promise<Product[]> {
+export async function fetchShopById(shopId: string): Promise<Shop | null> {
+  if (!hasSupabaseConfig()) {
+    throw new Error("Configuration Supabase manquante.");
+  }
+  try {
+    let rows: ShopRow[];
+    try {
+      rows = await requestSupabase<ShopRow[]>(
+        `shops?select=id,name,category,description,story,team_members,address,city,phone,is_open,pickup_today,open_sunday,delivery,hours,opening_hours,rating,review_count,lat,lng,is_published,logo_image_url,banner_image_url&id=eq.${shopId}&is_published=eq.true&limit=1`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!isSchemaColumnError(message, ["story", "team_members", "opening_hours", "logo_image_url", "banner_image_url"])) {
+        throw error;
+      }
+      rows = await requestSupabase<ShopRow[]>(
+        `shops?select=id,name,category,description,address,city,phone,is_open,pickup_today,open_sunday,delivery,hours,rating,review_count,lat,lng,is_published&id=eq.${shopId}&is_published=eq.true&limit=1`
+      );
+    }
+    return rows[0] ? mapShop(rows[0]) : null;
+  } catch (error) {
+    console.error("fetchShopById failed", error);
+    throw error;
+  }
+}
+
+export async function fetchShopCollectionTitle(collectionId: string): Promise<string | null> {
+  if (!hasSupabaseConfig()) {
+    throw new Error("Configuration Supabase manquante.");
+  }
+  const rows = await requestSupabase<Array<{ title: string | null }>>(
+    `shop_collections?select=title&id=eq.${collectionId}&limit=1`
+  );
+  return rows[0]?.title?.trim() || null;
+}
+
+function buildProductsQuery(options?: { limit?: number; lightweight?: boolean }) {
+  const select = options?.lightweight
+    ? "id,shop_id,collection_id,title,description,price,image_url,main_image_url,image_urls,category,categories,available_today,stock,pickup,delivery,created_at"
+    : "id,shop_id,collection_id,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at";
+  const limit = options?.limit ? `&limit=${options.limit}` : "";
+  return `products?select=${select}&is_published=eq.true&order=created_at.desc${limit}`;
+}
+
+export async function fetchProducts(options?: { limit?: number; lightweight?: boolean }): Promise<Product[]> {
   if (!hasSupabaseConfig()) {
     throw new Error("Configuration Supabase manquante.");
   }
   try {
     const shopRowsPromise = requestSupabase<Pick<ShopRow, "id" | "name">[]>("shops?select=id,name&is_published=eq.true");
-    let productRowsPromise = requestSupabase<ProductRow[]>(
-      "products?select=id,shop_id,title,description,features,composition,return_conditions,color,colors,price,image_url,category,available_today,stock,pickup,delivery,created_at&is_published=eq.true&order=created_at.desc"
-    );
+    const productRowsPromise = requestSupabase<ProductRow[]>(buildProductsQuery(options));
 
     let productRows: ProductRow[];
     let shopRows: Pick<ShopRow, "id" | "name">[];
@@ -251,15 +304,23 @@ export async function fetchProducts(): Promise<Product[]> {
       [productRows, shopRows] = await Promise.all([productRowsPromise, shopRowsPromise]);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (!isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors"])) {
+      if (isStatementTimeoutError(message)) {
+        [productRows, shopRows] = await Promise.all([
+          requestSupabase<ProductRow[]>(
+            buildProductsQuery({ limit: options?.limit ?? 60, lightweight: true })
+          ),
+          shopRowsPromise,
+        ]);
+      } else if (!isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors", "main_image_url", "image_urls", "categories"])) {
         throw error;
+      } else {
+        [productRows, shopRows] = await Promise.all([
+          requestSupabase<ProductRow[]>(
+            buildProductsQuery({ limit: options?.limit, lightweight: true })
+          ),
+          shopRowsPromise,
+        ]);
       }
-      [productRows, shopRows] = await Promise.all([
-        requestSupabase<ProductRow[]>(
-          "products?select=id,shop_id,title,description,price,image_url,category,available_today,stock,pickup,delivery,created_at&is_published=eq.true&order=created_at.desc"
-        ),
-        shopRowsPromise,
-      ]);
     }
     const shopNameById = new Map(shopRows.map((shop) => [shop.id, shop.name]));
     return productRows
@@ -267,6 +328,92 @@ export async function fetchProducts(): Promise<Product[]> {
       .map((row) => mapProduct(row, shopNameById.get(row.shop_id) ?? "Boutique"));
   } catch (error) {
     console.error("fetchProducts failed", error);
+    throw error;
+  }
+}
+
+export async function fetchProductsByShopId(shopId: string): Promise<Product[]> {
+  if (!hasSupabaseConfig()) {
+    throw new Error("Configuration Supabase manquante.");
+  }
+  try {
+    const shop = await fetchShopById(shopId);
+    if (!shop) return [];
+
+    let productRows: ProductRow[];
+    try {
+      productRows = await requestSupabase<ProductRow[]>(
+        `products?select=id,shop_id,collection_id,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at&shop_id=eq.${shopId}&is_published=eq.true&order=created_at.desc`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (
+        !isSchemaColumnError(message, [
+          "features",
+          "composition",
+          "return_conditions",
+          "color",
+          "colors",
+          "main_image_url",
+          "image_urls",
+          "categories",
+          "collection_id",
+        ])
+      ) {
+        throw error;
+      }
+      productRows = await requestSupabase<ProductRow[]>(
+        `products?select=id,shop_id,title,description,price,image_url,main_image_url,image_urls,category,available_today,stock,pickup,delivery,created_at&shop_id=eq.${shopId}&is_published=eq.true&order=created_at.desc`
+      );
+    }
+
+    return productRows.map((row) => mapProduct(row, shop.name));
+  } catch (error) {
+    console.error("fetchProductsByShopId failed", error);
+    throw error;
+  }
+}
+
+export async function fetchProductById(productId: string): Promise<Product | null> {
+  if (!hasSupabaseConfig()) {
+    throw new Error("Configuration Supabase manquante.");
+  }
+  try {
+    let productRows: ProductRow[];
+    try {
+      productRows = await requestSupabase<ProductRow[]>(
+        `products?select=id,shop_id,collection_id,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at&id=eq.${productId}&is_published=eq.true&limit=1`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (
+        !isSchemaColumnError(message, [
+          "features",
+          "composition",
+          "return_conditions",
+          "color",
+          "colors",
+          "main_image_url",
+          "image_urls",
+          "categories",
+          "collection_id",
+        ])
+      ) {
+        throw error;
+      }
+      productRows = await requestSupabase<ProductRow[]>(
+        `products?select=id,shop_id,title,description,price,image_url,main_image_url,image_urls,category,available_today,stock,pickup,delivery,created_at&id=eq.${productId}&is_published=eq.true&limit=1`
+      );
+    }
+
+    const row = productRows[0];
+    if (!row) return null;
+
+    const shop = await fetchShopById(row.shop_id);
+    if (!shop) return null;
+    return mapProduct(row, shop.name);
+  } catch (error) {
+    console.error("fetchProductById failed", error);
     throw error;
   }
 }

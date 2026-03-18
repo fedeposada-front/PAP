@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Camera, Heart, Package, Star, Phone, LogOut, Save, Store, ChevronRight } from "lucide-react";
+import { Camera, Heart, Package, Star, Phone, LogOut, Save, Store, ChevronRight, UserMinus } from "lucide-react";
 import { Button, Header, Input, Badge } from "../ds";
 import { useAuth } from "../AuthContext";
 import { AddressAutocompleteInput } from "../AddressAutocompleteInput";
@@ -14,6 +14,7 @@ import {
 } from "../../services/buyerCollections";
 import { getShopHref } from "../../utils/shopRouting";
 import { getCategoryLabel } from "../../data/catalog";
+import { unfollowShop } from "../../services/shopFollowers";
 
 const BUYER_PROFILE_STORAGE_KEY = "mcl_buyer_profile_v1";
 
@@ -45,6 +46,8 @@ export function BuyerProfileScreenNext() {
   const [favoriteProducts, setFavoriteProducts] = useState<FavoriteProductItem[]>([]);
   const [followedShops, setFollowedShops] = useState<FollowedShopItem[]>([]);
   const [isLoadingCollections, setIsLoadingCollections] = useState(false);
+  const [followActionMessage, setFollowActionMessage] = useState<string | null>(null);
+  const [actingFollowShopId, setActingFollowShopId] = useState<string | null>(null);
 
   useEffect(() => {
     if (isLoading) return;
@@ -167,6 +170,30 @@ export function BuyerProfileScreenNext() {
     void run();
   };
 
+  const handleUnfollowShop = (shop: FollowedShopItem) => {
+    const run = async () => {
+      if (!user?.id || !accessToken) return;
+      setFollowActionMessage(null);
+      setActingFollowShopId(shop.id);
+      const previousShops = followedShops;
+      setFollowedShops((prev) => prev.filter((item) => item.id !== shop.id));
+      try {
+        await unfollowShop({
+          userId: user.id,
+          shopId: shop.id,
+          accessToken,
+        });
+        setFollowActionMessage(`Vous ne suivez plus ${shop.name}.`);
+      } catch (error) {
+        setFollowedShops(previousShops);
+        setFollowActionMessage(error instanceof Error ? error.message : "Impossible de mettre à jour le suivi.");
+      } finally {
+        setActingFollowShopId(null);
+      }
+    };
+    void run();
+  };
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Header title="Mon profil" onBack={() => push("/home")} />
@@ -258,6 +285,9 @@ export function BuyerProfileScreenNext() {
             <Store className="w-4 h-4 text-green" />
             Boutiques suivies
           </h4>
+          {followActionMessage && (
+            <p className="mb-3 text-sm text-muted-foreground">{followActionMessage}</p>
+          )}
           <div className="space-y-2">
             {isLoadingCollections && (
               <p className="text-sm text-muted-foreground">Chargement...</p>
@@ -269,13 +299,27 @@ export function BuyerProfileScreenNext() {
               <button
                 key={shop.id}
                 onClick={() => push(getShopHref(shop))}
-                className="w-full flex items-center justify-between rounded-xl bg-muted/40 px-3 py-2.5 hover:bg-muted/70 transition-colors text-left"
+                className="w-full flex items-center justify-between gap-3 rounded-xl bg-muted/40 px-3 py-2.5 hover:bg-muted/70 transition-colors text-left"
               >
                 <div className="min-w-0">
                   <p className="truncate">{shop.name}</p>
                   <p className="text-xs text-muted-foreground truncate">{getCategoryLabel(shop.category)}</p>
                 </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleUnfollowShop(shop);
+                    }}
+                    disabled={actingFollowShopId === shop.id}
+                    className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+                  >
+                    <UserMinus className="w-3.5 h-3.5" />
+                    {actingFollowShopId === shop.id ? "..." : "Ne plus suivre"}
+                  </button>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                </div>
               </button>
             ))}
           </div>
