@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  CreditCard,
   MapPin,
   Shield,
   Check,
@@ -13,18 +12,65 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { Button, Badge, Header, Input } from "../ds";
-import { useCart } from "../CartContext";
+import { useCart, type CartItem } from "../CartContext";
+import { useAuth } from "../AuthContext";
 import { trackLeadEvent } from "../../services/leadEvents";
+import {
+  createDraftOrders,
+  computeDraftOrderAmounts,
+  type DraftOrderAmounts,
+  type DraftOrderBundle,
+} from "../../services/orders";
+import type { OrderPaymentPolicy } from "../../types/orders";
+
+const BUYER_FEE_RATE = 0.02;
+const PICKUP_DEPOSIT_RATE = 0.2;
+const PICKUP_RESERVATION_DAYS = 7;
+
+interface CheckoutGroup {
+  key: string;
+  shopId: string;
+  shopName: string;
+  mode: "pickup" | "delivery";
+  items: CartItem[];
+  subtotal: number;
+  buyerFee: number;
+  paymentPolicy: OrderPaymentPolicy;
+  amounts: DraftOrderAmounts;
+  payNowAmount: number;
+  remainingLaterAmount: number;
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function getCartLineKey(item: CartItem) {
+  return `${item.product.id}:${item.color ?? ""}`;
+}
+
+function getCheckoutGroupKey(item: CartItem) {
+  return `${item.product.shopId}:${item.mode}`;
+}
+
+function buildReservationExpiry(days: number) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+}
 
 export function CheckoutScreenNext() {
   const router = useRouter();
   const push = (path: string) => router.push(path);
+  const { user, accessToken, isAuthenticated, isLoading } = useAuth();
   const { items, toggleMode, subtotal, buyerFee, total, clearCart } = useCart();
   const [confirmed, setConfirmed] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createdOrders, setCreatedOrders] = useState<DraftOrderBundle[]>([]);
+  const [confirmedItems, setConfirmedItems] = useState<CartItem[]>([]);
+  const [pickupPaymentPolicies, setPickupPaymentPolicies] = useState<
+    Record<string, OrderPaymentPolicy>
+  >({});
   const [editingAddress, setEditingAddress] = useState(false);
-  const [orderNumber] = useState(
-    `MCL-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`
-  );
   const [address, setAddress] = useState({
     name: "Marie Durand",
     street: "24 Rue Victor Hugo",
@@ -34,21 +80,211 @@ export function CheckoutScreenNext() {
   const [tempAddress, setTempAddress] = useState(address);
 
   const hasDeliveryItems = items.some((item) => item.mode === "delivery");
+  const hasStockIssues = items.some((item) => item.qty > Math.max(0, item.product.stock));
 
-  const handleConfirm = () => {
-    for (const item of items) {
-      trackLeadEvent({
-        type: "reservation_request",
-        shopId: item.product.shopId,
-        productId: item.product.id,
-        metadata: {
-          mode: item.mode,
-          qty: item.qty,
-          amount: Number((item.product.price * item.qty).toFixed(2)),
-        },
-      });
+  const baseGroupsByKey = new Map<
+    string,
+    {
+      key: string;
+      shopId: string;
+      shopName: string;
+      mode: "pickup" | "delivery";
+      items: CartItem[];
+      subtotal: number;
     }
-    setConfirmed(true);
+  >();
+
+  for (const item of items) {
+    const key = getCheckoutGroupKey(item);
+    const existingGroup = baseGroupsByKey.get(key);
+    if (existingGroup) {
+      existingGroup.items.push(item);
+      existingGroup.subtotal = roundMoney(
+        existingGroup.subtotal + item.product.price * item.qty
+      );
+      continue;
+    }
+
+    baseGroupsByKey.set(key, {
+      key,
+      shopId: item.product.shopId,
+      shopName: item.product.shopName,
+      mode: item.mode,
+      items: [item],
+      subtotal: roundMoney(item.product.price * item.qty),
+    });
+  }
+
+  const baseGroups = Array.from(baseGroupsByKey.values());
+  let remainingBuyerFee = roundMoney(buyerFee);
+  const checkoutGroups: CheckoutGroup[] = baseGroups.map((group, index) => {
+    const groupBuyerFee =
+      index === baseGroups.length - 1
+        ? remainingBuyerFee
+        : roundMoney(group.subtotal * BUYER_FEE_RATE);
+    remainingBuyerFee = roundMoney(Math.max(0, remainingBuyerFee - groupBuyerFee));
+
+    const paymentPolicy: OrderPaymentPolicy =
+      group.mode === "pickup"
+        ? (pickupPaymentPolicies[group.key] ?? "full_payment")
+        : "full_payment";
+
+    const amounts = computeDraftOrderAmounts({
+      items: group.items.map((item) => ({
+        shopId: group.shopId,
+        title: item.product.title,
+        quantity: item.qty,
+        unitPrice: item.product.price,
+      })),
+      fulfillmentType: group.mode,
+      paymentPolicy,
+      buyerFee: groupBuyerFee,
+      deliveryPrice: 0,
+      platformFee: 0,
+      depositRate: PICKUP_DEPOSIT_RATE,
+    });
+
+    return {
+      ...group,
+      buyerFee: groupBuyerFee,
+      paymentPolicy,
+      amounts,
+      payNowAmount:
+        paymentPolicy === "deposit_20" ? amounts.depositAmount : amounts.totalAmount,
+      remainingLaterAmount:
+        paymentPolicy === "deposit_20" ? amounts.remainingAmount : 0,
+    };
+  });
+
+  const pickupGroups = checkoutGroups.filter((group) => group.mode === "pickup");
+  const payNowTotal = roundMoney(
+    checkoutGroups.reduce((sum, group) => sum + group.payNowAmount, 0)
+  );
+  const remainingLaterTotal = roundMoney(
+    checkoutGroups.reduce((sum, group) => sum + group.remainingLaterAmount, 0)
+  );
+
+  const handleConfirm = async () => {
+    setCheckoutError(null);
+
+    if (hasStockIssues) {
+      setCheckoutError(
+        "Certaines quantités dépassent le stock disponible. Retournez au panier pour corriger."
+      );
+      return;
+    }
+
+    if (!items.length) {
+      push("/cart");
+      return;
+    }
+
+    if (!isAuthenticated || !user || !accessToken) {
+      setCheckoutError("Connectez-vous pour créer la commande.");
+      push("/auth");
+      return;
+    }
+
+    if (isLoading || isSubmitting) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const reservationExpiry = buildReservationExpiry(PICKUP_RESERVATION_DAYS);
+      const orders = checkoutGroups.map((group) => ({
+        buyerUserId: user.id,
+        shopId: group.shopId,
+        fulfillmentType: group.mode,
+        paymentPolicy: group.paymentPolicy,
+        items: group.items.map((item) => ({
+          productId: item.product.id,
+          shopId: group.shopId,
+          title: item.product.title,
+          imageUrl: item.product.image,
+          color: item.color ?? item.product.color,
+          quantity: item.qty,
+          unitPrice: item.product.price,
+          productSnapshot: {
+            productId: item.product.id,
+            shopId: item.product.shopId,
+            shopName: item.product.shopName,
+            title: item.product.title,
+            image: item.product.image,
+            category: item.product.category,
+            availableToday: item.product.availableToday,
+            pickup: item.product.pickup,
+            delivery: item.product.delivery,
+            color: item.color ?? item.product.color ?? null,
+          },
+        })),
+        buyerFee: group.buyerFee,
+        deliveryPrice: 0,
+        platformFee: 0,
+        customerNote:
+          group.mode === "pickup" && group.paymentPolicy === "deposit_20"
+            ? "Reservation avec acompte de 20%."
+            : undefined,
+        reservationExpiresAt:
+          group.mode === "pickup" && group.paymentPolicy === "deposit_20"
+            ? reservationExpiry
+            : null,
+        shipment:
+          group.mode === "delivery"
+            ? {
+                method: "carrier" as const,
+                serviceName: "Livraison standard",
+                carrierName: "A definir",
+                price: 0,
+                recipientName: address.name,
+                addressLine1: address.street,
+                postalCode: address.postalCode,
+                city: address.city,
+                countryCode: "FR",
+              }
+            : null,
+        pickupReservation:
+          group.mode === "pickup" && group.paymentPolicy === "deposit_20"
+            ? {
+                expiresAt: reservationExpiry,
+                depositRate: PICKUP_DEPOSIT_RATE,
+              }
+            : null,
+      }));
+
+      const bundles = await createDraftOrders({
+        accessToken,
+        orders,
+      });
+      const itemsSnapshot = items.map((item) => ({ ...item }));
+
+      for (const item of itemsSnapshot) {
+        trackLeadEvent({
+          type: "reservation_request",
+          shopId: item.product.shopId,
+          productId: item.product.id,
+          metadata: {
+            mode: item.mode,
+            qty: item.qty,
+            amount: Number((item.product.price * item.qty).toFixed(2)),
+          },
+        });
+      }
+
+      setCreatedOrders(bundles);
+      setConfirmedItems(itemsSnapshot);
+      clearCart();
+      setConfirmed(true);
+    } catch (error) {
+      setCheckoutError(
+        error instanceof Error
+          ? error.message
+          : "Impossible de créer la commande pour le moment."
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (items.length === 0 && !confirmed) {
@@ -57,6 +293,31 @@ export function CheckoutScreenNext() {
   }
 
   if (confirmed) {
+    const orderNumbers = createdOrders.map((bundle) => bundle.order.orderNumber);
+    const createdTotal = roundMoney(
+      createdOrders.reduce((sum, bundle) => sum + bundle.order.totalAmount, 0)
+    );
+    const createdPayNow = roundMoney(
+      createdOrders.reduce(
+        (sum, bundle) =>
+          sum +
+          (bundle.order.paymentPolicy === "deposit_20"
+            ? bundle.order.depositAmount
+            : bundle.order.totalAmount),
+        0
+      )
+    );
+    const createdRemaining = roundMoney(
+      createdOrders.reduce(
+        (sum, bundle) =>
+          sum +
+          (bundle.order.paymentPolicy === "deposit_20"
+            ? bundle.order.remainingAmount
+            : 0),
+        0
+      )
+    );
+
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background px-6">
         <motion.div
@@ -73,10 +334,15 @@ export function CheckoutScreenNext() {
           transition={{ delay: 0.3 }}
           className="text-center max-w-md"
         >
-          <h1 className="mb-2">Commande confirmée !</h1>
+          <h1 className="mb-2">Commande créée !</h1>
           <p className="text-muted-foreground mb-2">
-            Merci pour votre achat. Votre commande n°{orderNumber} a bien été
-            enregistrée.
+            {createdOrders.length === 1
+              ? `Votre commande n°${orderNumbers[0]} a bien été enregistrée.`
+              : `Vos commandes ${orderNumbers.join(", ")} ont bien été enregistrées.`}
+          </p>
+          <p className="text-sm text-muted-foreground mb-2">
+            Le paiement en ligne sera branché à l'étape suivante. Cette version
+            enregistre déjà les commandes réelles en base.
           </p>
           <div className="flex items-center justify-center gap-2 mb-8">
             <PartyPopper className="w-5 h-5 text-coral" />
@@ -86,10 +352,41 @@ export function CheckoutScreenNext() {
           </div>
 
           <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-6 text-left">
+            <h4 className="mb-3">Commandes créées</h4>
+            <div className="space-y-2 mb-4">
+              {createdOrders.map((bundle) => (
+                <div
+                  key={bundle.order.id}
+                  className="rounded-xl border border-border/70 px-3 py-2"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm truncate">{bundle.order.orderNumber}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {bundle.order.fulfillmentType === "pickup"
+                          ? "Retrait en boutique"
+                          : "Livraison"}
+                      </p>
+                    </div>
+                    <Badge
+                      variant={
+                        bundle.order.paymentPolicy === "deposit_20"
+                          ? "warning"
+                          : "coral"
+                      }
+                    >
+                      {bundle.order.paymentPolicy === "deposit_20"
+                        ? "Acompte 20%"
+                        : "Paiement total"}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
             <h4 className="mb-3">Récapitulatif</h4>
-            {items.map((item) => (
+            {confirmedItems.map((item) => (
               <div
-                key={item.product.id}
+                key={getCartLineKey(item)}
                 className="flex items-center gap-3 py-2 border-b border-border last:border-0"
               >
                 <img
@@ -107,18 +404,30 @@ export function CheckoutScreenNext() {
                 <p className="text-sm">{(item.product.price * item.qty).toFixed(2)} €</p>
               </div>
             ))}
-            <div className="flex justify-between text-sm mt-3 pt-2 border-t border-border">
-              <span className="text-muted-foreground">Total payé</span>
-              <span className="text-coral">{total.toFixed(2)} €</span>
+            <div className="space-y-2 text-sm mt-3 pt-2 border-t border-border">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Total commande</span>
+                <span>{createdTotal.toFixed(2)} €</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">À payer aujourd'hui</span>
+                <span className="text-coral">{createdPayNow.toFixed(2)} €</span>
+              </div>
+              {createdRemaining > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Reste en boutique</span>
+                  <span>{createdRemaining.toFixed(2)} €</span>
+                </div>
+              )}
             </div>
           </div>
 
           <div className="flex flex-col gap-3">
-            <Button fullWidth onClick={() => { clearCart(); push("/home"); }}>
+            <Button fullWidth onClick={() => push("/home")}>
               Continuer mes achats
             </Button>
-            <Button fullWidth variant="outline" onClick={() => { clearCart(); push("/home"); }}>
-              Suivre ma commande
+            <Button fullWidth variant="outline" onClick={() => push("/home")}>
+              Retour à l'accueil
             </Button>
           </div>
         </motion.div>
@@ -132,12 +441,17 @@ export function CheckoutScreenNext() {
 
       <div className="flex-1 lg:max-w-4xl lg:mx-auto lg:w-full lg:flex lg:gap-8 lg:py-6 lg:px-8">
         <div className="flex-1 px-4 lg:px-0 py-4 space-y-4">
+          {checkoutError && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {checkoutError}
+            </div>
+          )}
           {/* Order summary */}
           <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm">
             <h4 className="mb-3">Votre commande</h4>
             {items.map((item) => (
               <div
-                key={item.product.id}
+                key={getCartLineKey(item)}
                 className="py-2.5 border-b border-border last:border-0"
               >
                 <div className="flex items-center gap-3">
@@ -159,7 +473,9 @@ export function CheckoutScreenNext() {
                 {/* Delivery mode toggle */}
                 <div className="flex gap-2 mt-2.5 ml-[calc(3.5rem+0.75rem)]">
                   <button
-                    onClick={() => { if (item.mode !== "pickup") toggleMode(item.product.id); }}
+                    onClick={() => {
+                      if (item.mode !== "pickup") toggleMode(item.product.id, item.color);
+                    }}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
                       item.mode === "pickup"
                         ? "bg-coral-light text-coral"
@@ -171,7 +487,9 @@ export function CheckoutScreenNext() {
                   </button>
                   {item.product.delivery && (
                     <button
-                      onClick={() => { if (item.mode !== "delivery") toggleMode(item.product.id); }}
+                      onClick={() => {
+                        if (item.mode !== "delivery") toggleMode(item.product.id, item.color);
+                      }}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
                         item.mode === "delivery"
                           ? "bg-green-light text-green"
@@ -214,40 +532,107 @@ export function CheckoutScreenNext() {
             </div>
           )}
 
+          {/* Pickup payment policy */}
+          {pickupGroups.length > 0 && (
+            <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm">
+              <div className="mb-3">
+                <h4>Paiement du retrait</h4>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Choisissez, pour chaque boutique retirée sur place, si le
+                  client paie tout maintenant ou seulement 20% d'acompte.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {pickupGroups.map((group) => {
+                  const totalItemsInGroup = group.items.reduce(
+                    (sum, item) => sum + item.qty,
+                    0
+                  );
+
+                  return (
+                    <div
+                      key={group.key}
+                      className="rounded-2xl border border-border/70 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm truncate">{group.shopName}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {totalItemsInGroup} article
+                            {totalItemsInGroup > 1 ? "s" : ""}
+                          </p>
+                        </div>
+                        <Badge variant="outline">Retrait</Badge>
+                      </div>
+
+                      <div className="grid gap-2 mt-3 sm:grid-cols-2">
+                        <button
+                          onClick={() =>
+                            setPickupPaymentPolicies((prev) => ({
+                              ...prev,
+                              [group.key]: "full_payment",
+                            }))
+                          }
+                          className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+                            group.paymentPolicy === "full_payment"
+                              ? "border-coral bg-coral-light/60"
+                              : "border-border bg-white hover:bg-muted/50"
+                          }`}
+                        >
+                          <p className="text-sm">Payer 100% en ligne</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {group.amounts.totalAmount.toFixed(2)} € aujourd'hui
+                          </p>
+                        </button>
+
+                        <button
+                          onClick={() =>
+                            setPickupPaymentPolicies((prev) => ({
+                              ...prev,
+                              [group.key]: "deposit_20",
+                            }))
+                          }
+                          className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+                            group.paymentPolicy === "deposit_20"
+                              ? "border-green bg-green-light/60"
+                              : "border-border bg-white hover:bg-muted/50"
+                          }`}
+                        >
+                          <p className="text-sm">Réserver avec 20%</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {group.payNowAmount.toFixed(2)} € aujourd'hui
+                            {group.remainingLaterAmount > 0
+                              ? ` · ${group.remainingLaterAmount.toFixed(2)} € en boutique`
+                              : ""}
+                          </p>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Payment */}
           <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm">
             <h4 className="mb-3">Paiement</h4>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3 p-3 bg-coral-light rounded-xl border-2 border-coral">
-                <CreditCard className="w-5 h-5 text-coral" />
-                <div className="flex-1">
-                  <p className="text-sm">Carte bancaire</p>
-                  <p className="text-xs text-muted-foreground">
-                    Visa, Mastercard, CB
-                  </p>
-                </div>
-                <div className="w-5 h-5 rounded-full border-2 border-coral flex items-center justify-center">
-                  <div className="w-2.5 h-2.5 bg-coral rounded-full" />
-                </div>
+            <div className="rounded-2xl border border-dashed border-border bg-muted/40 p-4">
+              <div className="flex items-center gap-2 text-sm">
+                <Shield className="w-4 h-4 text-coral" />
+                <span>Le débit carte sera branché à l'étape Stripe suivante.</span>
               </div>
-              <div className="flex items-center gap-3 p-3 bg-muted rounded-xl cursor-pointer hover:bg-muted/80 transition-colors">
-                <span className="text-lg">📱</span>
-                <div className="flex-1">
-                  <p className="text-sm">Apple Pay / Google Pay</p>
-                </div>
-                <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/30" />
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              <Input
-                placeholder="Numéro de carte"
-                icon={<CreditCard className="w-4 h-4" />}
-              />
-              <div className="flex gap-3">
-                <Input placeholder="MM/AA" className="flex-1" />
-                <Input placeholder="CVC" className="flex-1" />
-              </div>
+              <p className="text-sm text-muted-foreground mt-2">
+                Cet écran crée déjà de vraies commandes en base, avec une
+                commande par boutique et par mode de retrait ou livraison.
+              </p>
+              <p className="text-sm text-muted-foreground mt-2">
+                Montant prévu aujourd'hui : {payNowTotal.toFixed(2)} €.
+                {remainingLaterTotal > 0
+                  ? ` Reste à payer en boutique : ${remainingLaterTotal.toFixed(2)} €.`
+                  : ""}
+              </p>
             </div>
           </div>
         </div>
@@ -268,22 +653,35 @@ export function CheckoutScreenNext() {
                 </span>
                 <span>{buyerFee.toFixed(2)} €</span>
               </div>
-              <div className="border-t border-border pt-2 flex justify-between text-lg">
-                <span>Total</span>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Total commande</span>
                 <span className="text-coral">{total.toFixed(2)} €</span>
               </div>
+              <div className="border-t border-border pt-2 flex justify-between text-lg">
+                <span>À payer aujourd'hui</span>
+                <span className="text-coral">{payNowTotal.toFixed(2)} €</span>
+              </div>
+              {remainingLaterTotal > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Reste en boutique</span>
+                  <span>{remainingLaterTotal.toFixed(2)} €</span>
+                </div>
+              )}
             </div>
             <Button
               fullWidth
               size="lg"
               className="mt-5"
+              disabled={hasStockIssues || isLoading || isSubmitting}
               onClick={handleConfirm}
             >
-              Payer {total.toFixed(2)} €
+              {isSubmitting
+                ? "Création de la commande..."
+                : `Créer la commande · ${payNowTotal.toFixed(2)} €`}
             </Button>
             <div className="flex items-center justify-center gap-2 mt-3 text-xs text-muted-foreground">
               <Shield className="w-3.5 h-3.5" />
-              Paiement 100% sécurisé
+              Commande persistée en base avant le paiement
             </div>
           </div>
         </div>
@@ -303,12 +701,24 @@ export function CheckoutScreenNext() {
           <span className="text-muted-foreground">{buyerFee.toFixed(2)} €</span>
         </div>
         <div className="flex items-center justify-between mb-3">
-          <span>Total</span>
-          <span className="text-xl text-coral">{total.toFixed(2)} €</span>
+          <span>À payer aujourd'hui</span>
+          <span className="text-xl text-coral">{payNowTotal.toFixed(2)} €</span>
         </div>
-        <Button fullWidth size="lg" onClick={handleConfirm}>
+        {remainingLaterTotal > 0 && (
+          <div className="text-xs text-muted-foreground mb-3">
+            Reste en boutique : {remainingLaterTotal.toFixed(2)} €
+          </div>
+        )}
+        <Button
+          fullWidth
+          size="lg"
+          disabled={hasStockIssues || isLoading || isSubmitting}
+          onClick={handleConfirm}
+        >
           <Shield className="w-4 h-4" />
-          Payer {total.toFixed(2)} €
+          {isSubmitting
+            ? "Création de la commande..."
+            : `Créer la commande · ${payNowTotal.toFixed(2)} €`}
         </Button>
       </div>
 
