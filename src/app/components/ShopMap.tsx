@@ -111,6 +111,8 @@ export function ShopMap({ shops, onShopClick, className = "", center, userLocati
   const markerPosition = userLocation ?? center ?? CENTER;
   const centerLat = mapCenter[0];
   const centerLng = mapCenter[1];
+  const markerLat = markerPosition[0];
+  const markerLng = markerPosition[1];
 
   useEffect(() => {
     let cancelled = false;
@@ -189,7 +191,7 @@ export function ShopMap({ shops, onShopClick, className = "", center, userLocati
       markersRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
 
-      map.on("moveend", () => {
+      map.on("dragend", () => {
         const current = map.getCenter();
         const nextCenter: [number, number] = [current.lat, current.lng];
         previousCenterRef.current = nextCenter;
@@ -268,8 +270,8 @@ export function ShopMap({ shops, onShopClick, className = "", center, userLocati
       if (!Number.isFinite(shop.lat) || !Number.isFinite(shop.lng)) return;
 
       const isOverlappingUser =
-        Math.abs(shop.lat - centerLat) < 0.00012 &&
-        Math.abs(shop.lng - centerLng) < 0.00012;
+        Math.abs(shop.lat - markerLat) < 0.00012 &&
+        Math.abs(shop.lng - markerLng) < 0.00012;
 
       // If shop and user share (almost) same coordinates, offset slightly so both markers remain visible.
       const plottedLat = isOverlappingUser ? shop.lat + 0.00035 * (index + 1) : shop.lat;
@@ -310,7 +312,7 @@ export function ShopMap({ shops, onShopClick, className = "", center, userLocati
       markersGroup.addLayer(marker);
     });
 
-  }, [resolvedShops, centerLat, centerLng]);
+  }, [resolvedShops, markerLat, markerLng]);
 
   return (
     <div className="relative h-full w-full">

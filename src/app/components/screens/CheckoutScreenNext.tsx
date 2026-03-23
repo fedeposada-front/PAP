@@ -181,7 +181,7 @@ export function CheckoutScreenNext() {
 
     if (!isAuthenticated || !user || !accessToken) {
       setCheckoutError("Connectez-vous pour créer la commande.");
-      push("/auth");
+      push("/auth?next=/checkout");
       return;
     }
 
@@ -262,6 +262,7 @@ export function CheckoutScreenNext() {
       for (const item of itemsSnapshot) {
         trackLeadEvent({
           type: "reservation_request",
+          actorUserId: user?.id,
           shopId: item.product.shopId,
           productId: item.product.id,
           metadata: {

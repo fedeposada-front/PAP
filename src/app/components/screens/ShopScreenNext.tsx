@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Star,
   MapPin,
@@ -8,7 +8,6 @@ import {
   Phone,
   Navigation,
   MessageCircle,
-  Heart,
   Share2,
   UserPlus,
   UserCheck,
@@ -20,7 +19,7 @@ import { useAuth } from "../AuthContext";
 import { trackLeadEvent } from "../../services/leadEvents";
 import { fetchProductsByShopId, fetchShopById, fetchShops } from "../../services/catalog";
 import type { Product, Shop } from "../../types/catalog";
-import { toShopSlug } from "../../utils/shopRouting";
+import { getProductHref, toShopSlug } from "../../utils/shopRouting";
 import { getCategoryLabel } from "../../data/catalog";
 import { fetchPublicShopNews, type ShopNewsItem } from "../../services/shopNews";
 import { fetchShopSettings } from "../../services/shopSettings";
@@ -45,6 +44,7 @@ export function ShopScreenNext() {
   const routeParam = decodeURIComponent(params.id ?? "");
   const normalizedRouteParam = routeParam.toLowerCase();
   const isPreviewMode = searchParams.get("preview") === "1";
+  const pathname = usePathname();
   const router = useRouter();
   const push = (path: string) => router.push(path);
   const [shop, setShop] = useState<Shop | null>(null);
@@ -53,17 +53,17 @@ export function ShopScreenNext() {
   const [isLoading, setIsLoading] = useState(true);
   const shopProducts = shop ? allProducts.filter((p) => p.shopId === shop.id) : [];
   const shopNewsHref = shop ? `/shop/${encodeURIComponent(shop.slug ?? toShopSlug(shop.name))}/news` : "";
-  const [liked, setLiked] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followersCount, setFollowersCount] = useState(0);
   const [newsItems, setNewsItems] = useState<ShopNewsItem[]>([]);
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
   const { user, accessToken } = useAuth();
 
   const mapPreviewShop = (shopSettings: Awaited<ReturnType<typeof fetchShopSettings>>): Shop | null => {
     if (!shopSettings) return null;
     return {
       id: shopSettings.id,
-      slug: toShopSlug(shopSettings.name),
+      slug: shopSettings.slug ?? toShopSlug(shopSettings.name),
       name: shopSettings.name,
       category: shopSettings.category,
       image: shopSettings.logo_image_url || "https://placehold.co/640x640?text=MonCadeauLocal",
@@ -149,10 +149,11 @@ export function ShopScreenNext() {
     if (!shop) return;
     trackLeadEvent({
       type: "view_shop",
+      actorUserId: user?.id,
       shopId: shop.id,
       metadata: { source: "shop_screen" },
     });
-  }, [shop?.id, isPreviewMode]);
+  }, [shop?.id, isPreviewMode, user?.id]);
 
   useEffect(() => {
     if (isPreviewMode) {
@@ -201,6 +202,12 @@ export function ShopScreenNext() {
     };
   }, [shop?.id, user?.id, accessToken, isPreviewMode]);
 
+  useEffect(() => {
+    if (!shareFeedback) return undefined;
+    const timer = window.setTimeout(() => setShareFeedback(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [shareFeedback]);
+
   if (loadError) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background px-4">
@@ -228,6 +235,7 @@ export function ShopScreenNext() {
   const handleCallShop = () => {
     trackLeadEvent({
       type: "click_call",
+      actorUserId: user?.id,
       shopId: shop.id,
       metadata: { source: "shop_screen" },
     });
@@ -237,6 +245,7 @@ export function ShopScreenNext() {
   const handleRoute = () => {
     trackLeadEvent({
       type: "click_route",
+      actorUserId: user?.id,
       shopId: shop.id,
       metadata: { source: "shop_screen" },
     });
@@ -247,16 +256,61 @@ export function ShopScreenNext() {
   const handleMessage = () => {
     trackLeadEvent({
       type: "click_message",
+      actorUserId: user?.id,
       shopId: shop.id,
       metadata: { source: "shop_screen" },
     });
+    if (!user?.id || !accessToken) {
+      push(`/auth?next=${encodeURIComponent(`/messages?shop=${shop.id}`)}`);
+      return;
+    }
     push(`/messages?shop=${shop.id}`);
+  };
+
+  const handleShare = () => {
+    const run = async () => {
+      if (typeof window === "undefined") return;
+
+      const sharePath = `/shop/${encodeURIComponent(shop.slug ?? toShopSlug(shop.name))}`;
+      const shareUrl = `${window.location.origin}${sharePath}`;
+      const shareData = {
+        title: shop.name,
+        text: `Découvre la boutique ${shop.name} sur MonCadeauLocal.`,
+        url: shareUrl,
+      };
+
+      try {
+        if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+          await navigator.share(shareData);
+          setShareFeedback("Lien partagé");
+          return;
+        }
+
+        if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(shareUrl);
+          setShareFeedback("Lien copié");
+          return;
+        }
+
+        setShareFeedback("Partage indisponible");
+      } catch (error) {
+        const errorName = error instanceof Error ? error.name : "";
+        const errorMessage = error instanceof Error ? error.message : "";
+        const isUserCancelled =
+          /abort|cancel/i.test(errorName) ||
+          /abort|cancel/i.test(errorMessage);
+        if (isUserCancelled) return;
+        setShareFeedback("Partage indisponible");
+      }
+    };
+
+    void run();
   };
 
   const toggleFollow = () => {
     const run = async () => {
       if (!shop?.id || !user?.id || !accessToken) {
-        push("/auth");
+        push(`/auth?next=${encodeURIComponent(pathname)}`);
         return;
       }
       const nextFollow = !isFollowing;
@@ -322,12 +376,12 @@ export function ShopScreenNext() {
             right={
               <div className="flex gap-2">
                 <button
-                  onClick={() => setLiked(!liked)}
-                  className={`w-9 h-9 flex items-center justify-center rounded-full backdrop-blur ${liked ? "bg-coral-light" : "bg-white/80"}`}
+                  type="button"
+                  onClick={handleShare}
+                  aria-label="Partager la boutique"
+                  title="Partager la boutique"
+                  className="w-9 h-9 flex items-center justify-center rounded-full bg-white/80 backdrop-blur"
                 >
-                  <Heart className={`w-4 h-4 ${liked ? "text-coral fill-coral" : ""}`} />
-                </button>
-                <button className="w-9 h-9 flex items-center justify-center rounded-full bg-white/80 backdrop-blur">
                   <Share2 className="w-4 h-4" />
                 </button>
               </div>
@@ -349,11 +403,13 @@ export function ShopScreenNext() {
           </div>
           <div className="mt-3 flex items-center gap-2">
             <button
+              type="button"
               onClick={toggleFollow}
-              className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition-colors ${
+              aria-pressed={isFollowing}
+              className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm shadow-sm transition-colors ${
                 isFollowing
-                  ? "bg-white text-foreground"
-                  : "bg-coral text-white"
+                  ? "bg-coral-light text-coral hover:bg-coral-light/80"
+                  : "bg-coral text-white hover:bg-coral/90"
               }`}
             >
               {isFollowing ? <UserCheck className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
@@ -361,6 +417,9 @@ export function ShopScreenNext() {
             </button>
             <span className="text-sm text-white/90">{followersCount} followers</span>
           </div>
+          {shareFeedback && (
+            <p className="mt-2 text-xs text-white/90">{shareFeedback}</p>
+          )}
         </div>
       </div>
 
@@ -518,7 +577,15 @@ export function ShopScreenNext() {
                 <ProductCard
                   key={product.id}
                   {...product}
-                  onClick={() => push(`/product/${product.id}`)}
+                  onClick={() =>
+                    push(
+                      getProductHref({
+                        id: product.id,
+                        shopSlug: product.shopSlug ?? shop.slug,
+                        shopName: product.shopName,
+                      })
+                    )
+                  }
                 />
               ))}
             </div>

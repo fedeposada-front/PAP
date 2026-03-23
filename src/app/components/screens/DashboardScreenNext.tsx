@@ -19,13 +19,14 @@ import {
   Users,
 } from "lucide-react";
 import { getLeadStats } from "../../services/leadEvents";
+import { fetchShopIncomingMessageCount, subscribeToMessages } from "../../services/messages";
 import {
   deleteSellerProduct,
   fetchSellerProducts,
   updateSellerProductPublishStatus,
 } from "../../services/sellerProducts";
 import type { Product, ShopTeamMember } from "../../types/catalog";
-import { getShopHref } from "../../utils/shopRouting";
+import { getProductHref, getShopHref } from "../../utils/shopRouting";
 import { fetchShopSettings, saveShopTeamMembers } from "../../services/shopSettings";
 import {
   createSellerShopNews,
@@ -62,6 +63,7 @@ export function DashboardScreenNext() {
   const [followersCount, setFollowersCount] = useState(0);
   const [followers, setFollowers] = useState<ShopFollowerItem[]>([]);
   const [isLoadingFollowers, setIsLoadingFollowers] = useState(false);
+  const [messageCount, setMessageCount] = useState(0);
   const fullName = `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim();
   const displayName = user?.shopName || fullName || "Votre boutique";
   const publicShopHref = getShopHref({
@@ -71,8 +73,8 @@ export function DashboardScreenNext() {
   const previewShopHref = `${publicShopHref}?preview=1`;
 
   const leadStats = useMemo(
-    () => getLeadStats({ shopId: shopId ?? "seller", sinceDays: 30 }),
-    [shopId]
+    () => getLeadStats({ shopId: shopId ?? "seller", sinceDays: 30, excludeActorUserId: user?.id }),
+    [shopId, user?.id]
   );
 
   useEffect(() => {
@@ -205,6 +207,47 @@ export function DashboardScreenNext() {
     };
   }, [shopId, accessToken]);
 
+  useEffect(() => {
+    if (!shopId || !accessToken) {
+      setMessageCount(0);
+      return;
+    }
+
+    let cancelled = false;
+
+    const refreshMessageCount = async () => {
+      try {
+        const count = await fetchShopIncomingMessageCount({
+          shopId,
+          accessToken,
+          sinceDays: 30,
+          excludeSenderUserId: user?.id,
+        });
+        if (!cancelled) setMessageCount(count);
+      } catch {
+        if (!cancelled) setMessageCount(0);
+      }
+    };
+
+    void refreshMessageCount();
+    const unsubscribe = subscribeToMessages(() => {
+      void refreshMessageCount();
+    });
+    const intervalId = window.setInterval(() => {
+      void refreshMessageCount();
+    }, 10000);
+    const handleFocus = () => {
+      void refreshMessageCount();
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [shopId, user?.id, accessToken]);
+
   const formatFollowerDate = (value: string | null) => {
     if (!value) return "";
     const date = new Date(value);
@@ -304,7 +347,11 @@ export function DashboardScreenNext() {
   const handlePreviewProduct = (product: Product) => {
     if (typeof window === "undefined") return;
     const href = product.isPublished
-      ? `/product/${encodeURIComponent(product.id)}`
+      ? getProductHref({
+          id: product.id,
+          shopSlug: product.shopSlug,
+          shopName: product.shopName,
+        })
       : `/product/${encodeURIComponent(product.id)}?preview=1`;
     window.open(href, "_blank", "noopener,noreferrer");
   };
@@ -582,7 +629,7 @@ onClick={() => {
           <StatCard
             icon="💬"
             label="Messages"
-            value={String(leadStats.clickMessage)}
+            value={String(messageCount)}
           />
           <StatCard
             icon="👥"

@@ -1,3 +1,5 @@
+import { toShopSlug } from "../utils/shopRouting";
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
@@ -21,6 +23,7 @@ interface ShopRow {
   id: string;
   name: string;
   category: string;
+  slug?: string | null;
 }
 
 export interface FavoriteProductItem {
@@ -30,12 +33,14 @@ export interface FavoriteProductItem {
   category: string;
   shopId: string;
   shopName: string;
+  shopSlug?: string;
 }
 
 export interface FollowedShopItem {
   id: string;
   name: string;
   category: string;
+  slug?: string;
 }
 
 function hasSupabaseConfig() {
@@ -89,27 +94,35 @@ export async function fetchFavoriteProducts(params: {
 
   const shopIds = [...new Set(products.map((product) => product.shop_id))];
   const shops = await requestSupabase<ShopRow[]>(
-    `shops?id=in.(${encodeInList(shopIds)})&select=id,name,category`,
+    `shops?id=in.(${encodeInList(shopIds)})&select=id,name,category,slug`,
     params.accessToken
-  );
+  ).catch(async (error) => {
+    const message = error instanceof Error ? error.message : "";
+    if (!/slug|schema cache|column/i.test(message)) throw error;
+    return requestSupabase<ShopRow[]>(
+      `shops?id=in.(${encodeInList(shopIds)})&select=id,name,category`,
+      params.accessToken
+    );
+  });
   const shopById = new Map(shops.map((shop) => [shop.id, shop]));
   const productById = new Map(products.map((product) => [product.id, product]));
 
-  return favoriteRows
-    .map((row) => {
-      const product = productById.get(row.product_id);
-      if (!product) return null;
-      const shop = shopById.get(product.shop_id);
-      return {
-        id: product.id,
-        title: product.title,
-        price: product.price,
-        category: product.category,
-        shopId: product.shop_id,
-        shopName: shop?.name ?? "Boutique",
-      } satisfies FavoriteProductItem;
-    })
-    .filter((item): item is FavoriteProductItem => item !== null);
+  const favoriteItems: FavoriteProductItem[] = [];
+  for (const row of favoriteRows) {
+    const product = productById.get(row.product_id);
+    if (!product) continue;
+    const shop = shopById.get(product.shop_id);
+    favoriteItems.push({
+      id: product.id,
+      title: product.title,
+      price: product.price,
+      category: product.category,
+      shopId: product.shop_id,
+      shopName: shop?.name ?? "Boutique",
+      shopSlug: shop?.slug?.trim() || (shop ? toShopSlug(shop.name) : undefined),
+    });
+  }
+  return favoriteItems;
 }
 
 export async function fetchFollowedShops(params: {
@@ -126,20 +139,28 @@ export async function fetchFollowedShops(params: {
 
   const shopIds = [...new Set(followedRows.map((row) => row.shop_id))];
   const shops = await requestSupabase<ShopRow[]>(
-    `shops?id=in.(${encodeInList(shopIds)})&select=id,name,category`,
+    `shops?id=in.(${encodeInList(shopIds)})&select=id,name,category,slug`,
     params.accessToken
-  );
+  ).catch(async (error) => {
+    const message = error instanceof Error ? error.message : "";
+    if (!/slug|schema cache|column/i.test(message)) throw error;
+    return requestSupabase<ShopRow[]>(
+      `shops?id=in.(${encodeInList(shopIds)})&select=id,name,category`,
+      params.accessToken
+    );
+  });
   const shopById = new Map(shops.map((shop) => [shop.id, shop]));
 
-  return followedRows
-    .map((row) => {
-      const shop = shopById.get(row.shop_id);
-      if (!shop) return null;
-      return {
-        id: shop.id,
-        name: shop.name,
-        category: shop.category,
-      } satisfies FollowedShopItem;
-    })
-    .filter((item): item is FollowedShopItem => item !== null);
+  const followedItems: FollowedShopItem[] = [];
+  for (const row of followedRows) {
+    const shop = shopById.get(row.shop_id);
+    if (!shop) continue;
+    followedItems.push({
+      id: shop.id,
+      name: shop.name,
+      category: shop.category,
+      slug: shop.slug?.trim() || toShopSlug(shop.name),
+    });
+  }
+  return followedItems;
 }

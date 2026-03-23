@@ -1,4 +1,5 @@
 import type { Product } from "../types/catalog";
+import { toShopSlug } from "../utils/shopRouting";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -7,6 +8,7 @@ const FALLBACK_IMAGE = "https://placehold.co/640x640?text=MonCadeauLocal";
 interface ShopRow {
   id: string;
   name: string;
+  slug?: string | null;
   owner_user_id?: string | null;
 }
 
@@ -18,11 +20,23 @@ interface ProfileRow {
 async function findLegacyShopsByName(shopName: string, accessToken: string): Promise<ShopRow[]> {
   const normalizedName = shopName.trim();
   if (!normalizedName) return [];
-  return requestSupabase<ShopRow[]>(
-    `shops?name=eq.${encodeURIComponent(normalizedName)}&select=id,name,owner_user_id&order=created_at.asc`,
-    { method: "GET" },
-    { accessToken }
-  );
+  try {
+    return await requestSupabase<ShopRow[]>(
+      `shops?name=eq.${encodeURIComponent(normalizedName)}&select=id,name,slug,owner_user_id&order=created_at.asc`,
+      { method: "GET" },
+      { accessToken }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!isSchemaColumnError(message, ["slug"])) {
+      throw error;
+    }
+    return requestSupabase<ShopRow[]>(
+      `shops?name=eq.${encodeURIComponent(normalizedName)}&select=id,name,owner_user_id&order=created_at.asc`,
+      { method: "GET" },
+      { accessToken }
+    );
+  }
 }
 
 async function claimLegacyShopIfNeeded(params: {
@@ -59,6 +73,7 @@ async function claimLegacyShopIfNeeded(params: {
 interface ProductRow {
   id: string;
   shop_id: string;
+  collection_id?: string | null;
   title: string;
   description: string | null;
   features: string | null;
@@ -85,9 +100,9 @@ interface ShopCollectionRow {
   id: string;
   shop_id: string;
   title: string;
-  description: string | null;
-  year: number | null;
-  image_url: string | null;
+  description?: string | null;
+  year?: number | null;
+  image_url?: string | null;
 }
 
 export interface SellerShopCollection {
@@ -102,6 +117,8 @@ export interface SellerShopCollection {
 interface RequestOptions {
   accessToken: string;
 }
+
+type ProductMutationPayload = Record<string, unknown>;
 
 function hasSupabaseConfig() {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -149,7 +166,84 @@ async function requestSupabase<T>(path: string, init: RequestInit, options: Requ
   return payload as T;
 }
 
+async function runProductMutation(params: {
+  path: string;
+  method: "POST" | "PATCH";
+  accessToken: string;
+  payloads: ProductMutationPayload[];
+}): Promise<void> {
+  let lastSchemaError: Error | null = null;
+
+  for (const payload of params.payloads) {
+    try {
+      await requestSupabase(
+        params.path,
+        {
+          method: params.method,
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify(params.method === "POST" ? [payload] : payload),
+        },
+        { accessToken: params.accessToken }
+      );
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors", "collection_id", "main_image_url", "image_urls", "categories"])) {
+        throw error;
+      }
+      lastSchemaError = error instanceof Error ? error : new Error("Product mutation failed.");
+    }
+  }
+
+  if (lastSchemaError) {
+    throw lastSchemaError;
+  }
+}
+
+async function fetchProductRowsWithFallback(encodedIds: string, accessToken: string): Promise<ProductRow[]> {
+  const selectVariants = [
+    "id,shop_id,collection_id,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,collection_id,title,description,features,composition,return_conditions,color,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,title,description,features,composition,return_conditions,color,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,collection_id,title,description,features,composition,return_conditions,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,title,description,features,composition,return_conditions,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,collection_id,title,description,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,title,description,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,collection_id,title,description,features,composition,return_conditions,color,price,image_url,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,title,description,features,composition,return_conditions,color,price,image_url,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,collection_id,title,description,features,composition,return_conditions,price,image_url,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,title,description,features,composition,return_conditions,price,image_url,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,collection_id,title,description,price,image_url,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,title,description,price,image_url,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+  ];
+
+  let lastSchemaError: Error | null = null;
+
+  for (const select of selectVariants) {
+    try {
+      return await requestSupabase<ProductRow[]>(
+        `products?shop_id=in.(${encodedIds})&select=${select}&order=created_at.desc`,
+        { method: "GET" },
+        { accessToken }
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors", "collection_id", "main_image_url", "image_urls", "categories"])) {
+        throw error;
+      }
+      lastSchemaError = error instanceof Error ? error : new Error("Product fetch failed.");
+    }
+  }
+
+  if (lastSchemaError) {
+    throw lastSchemaError;
+  }
+
+  return [];
+}
+
 function mapProduct(row: ProductRow, shopName: string): Product {
+  const shopSlug = toShopSlug(shopName);
   const soldCount = Number(row.sold_count ?? 0);
   const status: Product["status"] =
     row.is_published ? "published" : soldCount > 0 ? "disabled" : "draft";
@@ -157,11 +251,15 @@ function mapProduct(row: ProductRow, shopName: string): Product {
   return {
     id: row.id,
     shopId: row.shop_id,
+    collectionId: row.collection_id ?? undefined,
     shopName,
+    shopSlug,
     title: row.title,
     price: Number(row.price),
     image: row.image_url ?? row.main_image_url ?? FALLBACK_IMAGE,
+    imageUrls: Array.isArray(row.image_urls) ? row.image_urls.filter(Boolean) : (row.image_url ? [row.image_url] : []),
     category: row.categories?.[0] ?? row.category,
+    categories: Array.isArray(row.categories) && row.categories.length > 0 ? row.categories.filter(Boolean) : [row.category].filter(Boolean),
     availableToday: row.available_today,
     stock: row.stock,
     description: row.description ?? "",
@@ -190,12 +288,41 @@ function mapShopCollection(row: ShopCollectionRow): SellerShopCollection {
   };
 }
 
+async function fetchShopCollectionRows(path: string, accessToken: string): Promise<ShopCollectionRow[]> {
+  try {
+    return await requestSupabase<ShopCollectionRow[]>(
+      `${path}&select=id,shop_id,title,description,year,image_url`,
+      { method: "GET" },
+      { accessToken }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!isSchemaColumnError(message, ["description", "year", "image_url"])) {
+      throw error;
+    }
+
+    return requestSupabase<ShopCollectionRow[]>(
+      `${path}&select=id,shop_id,title`,
+      { method: "GET" },
+      { accessToken }
+    );
+  }
+}
+
 async function getOrCreateSellerShop(userId: string, accessToken: string): Promise<ShopRow> {
   const existing = await requestSupabase<ShopRow[]>(
-    `shops?owner_user_id=eq.${userId}&select=id,name&order=created_at.asc&limit=1`,
+    `shops?owner_user_id=eq.${userId}&select=id,name,slug&order=created_at.asc&limit=1`,
     { method: "GET" },
     { accessToken }
-  );
+  ).catch(async (error) => {
+    const message = error instanceof Error ? error.message : "";
+    if (!isSchemaColumnError(message, ["slug"])) throw error;
+    return requestSupabase<ShopRow[]>(
+      `shops?owner_user_id=eq.${userId}&select=id,name&order=created_at.asc&limit=1`,
+      { method: "GET" },
+      { accessToken }
+    );
+  });
   if (existing[0]) return existing[0];
 
   const profileRows = await requestSupabase<ProfileRow[]>(
@@ -248,10 +375,18 @@ export async function fetchSellerProducts(params: {
   if (!hasSupabaseConfig()) return [];
 
   const ownerShops = await requestSupabase<ShopRow[]>(
-    `shops?owner_user_id=eq.${params.userId}&select=id,name`,
+    `shops?owner_user_id=eq.${params.userId}&select=id,name,slug`,
     { method: "GET" },
     { accessToken: params.accessToken }
-  );
+  ).catch(async (error) => {
+    const message = error instanceof Error ? error.message : "";
+    if (!isSchemaColumnError(message, ["slug"])) throw error;
+    return requestSupabase<ShopRow[]>(
+      `shops?owner_user_id=eq.${params.userId}&select=id,name`,
+      { method: "GET" },
+      { accessToken: params.accessToken }
+    );
+  });
   const profileRows = await requestSupabase<ProfileRow[]>(
     `profiles?id=eq.${params.userId}&select=shop_name,shop_address&limit=1`,
     { method: "GET" },
@@ -270,46 +405,17 @@ export async function fetchSellerProducts(params: {
 
   const shopIds = shops.map((shop) => shop.id);
   const encodedIds = encodeInList(shopIds);
-  let productRows: ProductRow[];
-  try {
-    productRows = await requestSupabase<ProductRow[]>(
-      `products?shop_id=in.(${encodedIds})&select=id,shop_id,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count&order=created_at.desc`,
-      { method: "GET" },
-      { accessToken: params.accessToken }
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors"])) {
-      try {
-        productRows = await requestSupabase<ProductRow[]>(
-          `products?shop_id=in.(${encodedIds})&select=id,shop_id,title,description,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count&order=created_at.desc`,
-          { method: "GET" },
-          { accessToken: params.accessToken }
-        );
-      } catch (compatError) {
-        const compatMessage = compatError instanceof Error ? compatError.message : "";
-        if (!isSchemaColumnError(compatMessage, ["main_image_url", "image_urls", "categories"])) {
-          throw compatError;
-        }
-        productRows = await requestSupabase<ProductRow[]>(
-          `products?shop_id=in.(${encodedIds})&select=id,shop_id,title,description,price,image_url,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count&order=created_at.desc`,
-          { method: "GET" },
-          { accessToken: params.accessToken }
-        );
-      }
-    } else if (isSchemaColumnError(message, ["main_image_url", "image_urls", "categories"])) {
-      productRows = await requestSupabase<ProductRow[]>(
-        `products?shop_id=in.(${encodedIds})&select=id,shop_id,title,description,price,image_url,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count&order=created_at.desc`,
-        { method: "GET" },
-        { accessToken: params.accessToken }
-      );
-    } else {
-      throw error;
-    }
-  }
+  const productRows = await fetchProductRowsWithFallback(encodedIds, params.accessToken);
 
-  const shopById = new Map(shops.map((shop) => [shop.id, shop.name]));
-  return productRows.map((row) => mapProduct(row, shopById.get(row.shop_id) ?? "Boutique"));
+  const shopById = new Map(shops.map((shop) => [shop.id, shop]));
+  return productRows.map((row) => {
+    const shop = shopById.get(row.shop_id);
+    const product = mapProduct(row, shop?.name ?? "Boutique");
+    return {
+      ...product,
+      shopSlug: shop?.slug?.trim() || product.shopSlug,
+    };
+  });
 }
 
 export async function fetchSellerShopCollections(params: {
@@ -319,11 +425,19 @@ export async function fetchSellerShopCollections(params: {
   if (!hasSupabaseConfig()) return [];
 
   const shop = await getOrCreateSellerShop(params.userId, params.accessToken);
-  const rows = await requestSupabase<ShopCollectionRow[]>(
-    `shop_collections?shop_id=eq.${shop.id}&select=id,shop_id,title,description,year,image_url&order=created_at.asc`,
-    { method: "GET" },
-    { accessToken: params.accessToken }
-  );
+  let rows: ShopCollectionRow[];
+  try {
+    rows = await fetchShopCollectionRows(
+      `shop_collections?shop_id=eq.${shop.id}&order=created_at.asc`,
+      params.accessToken
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!/relation .*shop_collections.* does not exist/i.test(message)) {
+      throw error;
+    }
+    return [];
+  }
 
   return rows.map(mapShopCollection);
 }
@@ -346,30 +460,62 @@ export async function createSellerShopCollection(params: {
     throw new Error("Nom de collection requis (min 2 caracteres).");
   }
 
-  const existingRows = await requestSupabase<ShopCollectionRow[]>(
-    `shop_collections?shop_id=eq.${shop.id}&title=eq.${encodeURIComponent(normalizedTitle)}&select=id,shop_id,title,description,year,image_url&limit=1`,
-    { method: "GET" },
-    { accessToken: params.accessToken }
-  );
+  let existingRows: ShopCollectionRow[];
+  try {
+    existingRows = await fetchShopCollectionRows(
+      `shop_collections?shop_id=eq.${shop.id}&title=eq.${encodeURIComponent(normalizedTitle)}&limit=1`,
+      params.accessToken
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (/relation .*shop_collections.* does not exist/i.test(message)) {
+      throw new Error("Table shop_collections absente. Lancez la migration 20260314_shop_collections.sql.");
+    }
+    throw error;
+  }
   if (existingRows[0]) {
     return mapShopCollection(existingRows[0]);
   }
 
-  const insertedRows = await requestSupabase<ShopCollectionRow[]>(
-    "shop_collections",
-    {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify([{
-        shop_id: shop.id,
-        title: normalizedTitle,
-        description: params.description?.trim() || null,
-        year: typeof params.year === "number" && Number.isFinite(params.year) ? params.year : null,
-        image_url: params.imageUrl?.trim() || null,
-      }]),
-    },
-    { accessToken: params.accessToken }
-  );
+  let insertedRows: ShopCollectionRow[];
+  try {
+    insertedRows = await requestSupabase<ShopCollectionRow[]>(
+      "shop_collections",
+      {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify([{
+          shop_id: shop.id,
+          title: normalizedTitle,
+          description: params.description?.trim() || null,
+          year: typeof params.year === "number" && Number.isFinite(params.year) ? params.year : null,
+          image_url: params.imageUrl?.trim() || null,
+        }]),
+      },
+      { accessToken: params.accessToken }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (/relation .*shop_collections.* does not exist/i.test(message)) {
+      throw new Error("Table shop_collections absente. Lancez la migration 20260314_shop_collections.sql.");
+    }
+    if (!isSchemaColumnError(message, ["description", "year", "image_url"])) {
+      throw error;
+    }
+
+    insertedRows = await requestSupabase<ShopCollectionRow[]>(
+      "shop_collections",
+      {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify([{
+          shop_id: shop.id,
+          title: normalizedTitle,
+        }]),
+      },
+      { accessToken: params.accessToken }
+    );
+  }
 
   if (!insertedRows[0]) {
     throw new Error("Impossible de creer la collection.");
@@ -441,6 +587,22 @@ export async function createSellerProduct(params: {
     return_conditions: params.returnConditions,
   };
 
+  const productDetailsNoCollectionPayload = {
+    ...productDetailsPayload,
+    collection_id: undefined,
+  };
+
+  const productDetailsNoColorPayload = {
+    ...productDetailsPayload,
+    color: undefined,
+  };
+
+  const productDetailsNoCollectionNoColorPayload = {
+    ...productDetailsPayload,
+    collection_id: undefined,
+    color: undefined,
+  };
+
   const legacyBasePayload = {
     shop_id: shop.id,
     title: params.title,
@@ -471,79 +633,187 @@ export async function createSellerProduct(params: {
     categories: normalizedCategories.length > 0 ? normalizedCategories : ["artisanat"],
   };
 
-  const modernCompatPayload = {
-    ...legacyBasePayload,
+  const modernNoCollectionPayload = {
+    ...productDetailsNoCollectionPayload,
     main_image_url: mainImageForIndexedColumn,
     image_urls: normalizedImageUrls.length > 0 ? normalizedImageUrls : (mainImage ? [mainImage] : []),
     categories: normalizedCategories.length > 0 ? normalizedCategories : ["artisanat"],
   };
 
-  const legacyDetailsCompatPayload = {
-    ...legacyProductDetailsPayload,
+  const modernNoColorPayload = {
+    ...productDetailsNoColorPayload,
+    main_image_url: mainImageForIndexedColumn,
+    image_urls: normalizedImageUrls.length > 0 ? normalizedImageUrls : (mainImage ? [mainImage] : []),
+    categories: normalizedCategories.length > 0 ? normalizedCategories : ["artisanat"],
   };
 
-  try {
-    await requestSupabase(
-      "products",
-      {
-        method: "POST",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify([modernPayload]),
-      },
-      { accessToken: params.accessToken }
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors", "collection_id"])) {
-      try {
-        await requestSupabase(
-          "products",
-          {
-            method: "POST",
-            headers: { Prefer: "return=minimal" },
-            body: JSON.stringify([modernCompatPayload]),
-          },
-          { accessToken: params.accessToken }
-        );
-        return;
-      } catch (compatError) {
-        const compatMessage = compatError instanceof Error ? compatError.message : "";
-        if (isSchemaColumnError(compatMessage, ["main_image_url", "image_urls", "categories"])) {
-          try {
-            await requestSupabase(
-              "products",
-              {
-                method: "POST",
-                headers: { Prefer: "return=minimal" },
-                body: JSON.stringify([legacyDetailsCompatPayload]),
-              },
-              { accessToken: params.accessToken }
-            );
-            return;
-          } catch (legacyDetailsError) {
-            const legacyDetailsMessage = legacyDetailsError instanceof Error ? legacyDetailsError.message : "";
-            if (!isSchemaColumnError(legacyDetailsMessage, ["features", "composition", "return_conditions"])) {
-              throw legacyDetailsError;
-            }
-          }
-        } else {
-          throw compatError;
-        }
-      }
-    } else if (!isSchemaColumnError(message, ["main_image_url", "image_urls", "categories", "color", "colors", "collection_id"])) {
-      throw error;
-    }
+  const modernNoCollectionNoColorPayload = {
+    ...productDetailsNoCollectionNoColorPayload,
+    main_image_url: mainImageForIndexedColumn,
+    image_urls: normalizedImageUrls.length > 0 ? normalizedImageUrls : (mainImage ? [mainImage] : []),
+    categories: normalizedCategories.length > 0 ? normalizedCategories : ["artisanat"],
+  };
 
-    await requestSupabase(
-      "products",
-      {
-        method: "POST",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify([legacyBasePayload]),
-      },
-      { accessToken: params.accessToken }
-    );
+  await runProductMutation({
+    path: "products",
+    method: "POST",
+    accessToken: params.accessToken,
+    payloads: [
+      modernPayload,
+      modernNoCollectionPayload,
+      modernNoColorPayload,
+      modernNoCollectionNoColorPayload,
+      productDetailsPayload,
+      productDetailsNoCollectionPayload,
+      productDetailsNoColorPayload,
+      productDetailsNoCollectionNoColorPayload,
+      legacyProductDetailsPayload,
+      legacyBasePayload,
+    ],
+  });
+}
+
+export async function updateSellerProduct(params: {
+  productId: string;
+  accessToken: string;
+  title: string;
+  description: string;
+  features: string;
+  composition: string;
+  returnConditions: string;
+  color: string;
+  price: number;
+  stock: number;
+  categories: string[];
+  collectionId?: string;
+  pickup: boolean;
+  delivery: boolean;
+  isPublished: boolean;
+  mainImageUrl?: string;
+  imageUrls?: string[];
+}): Promise<void> {
+  if (!hasSupabaseConfig()) {
+    throw new Error("Configuration Supabase manquante.");
   }
+
+  const normalizedImageUrls = (params.imageUrls ?? [])
+    .map((url) => url.trim())
+    .filter(Boolean);
+  const mainImage = params.mainImageUrl?.trim() || normalizedImageUrls[0] || null;
+  const mainImageForIndexedColumn =
+    mainImage && mainImage.startsWith("data:")
+      ? FALLBACK_IMAGE
+      : mainImage;
+  const normalizedCategories = params.categories.filter(Boolean);
+  const primaryCategory = normalizedCategories[0] ?? "artisanat";
+  const normalizedCollectionId = params.collectionId?.trim() || null;
+  const primaryColor = params.color.trim();
+
+  const basePayload = {
+    ...(normalizedCollectionId ? { collection_id: normalizedCollectionId } : { collection_id: null }),
+    title: params.title,
+    description: params.description,
+    price: params.price,
+    image_url: mainImage,
+    category: primaryCategory,
+    category_id: primaryCategory,
+    color: primaryColor || null,
+    available_today: params.pickup,
+    stock: params.stock,
+    pickup: params.pickup,
+    delivery: params.delivery,
+    is_published: params.isPublished,
+  };
+
+  const productDetailsPayload = {
+    ...basePayload,
+    features: params.features,
+    composition: params.composition,
+    return_conditions: params.returnConditions,
+  };
+
+  const productDetailsNoCollectionPayload = {
+    ...productDetailsPayload,
+    collection_id: undefined,
+  };
+
+  const productDetailsNoColorPayload = {
+    ...productDetailsPayload,
+    color: undefined,
+  };
+
+  const productDetailsNoCollectionNoColorPayload = {
+    ...productDetailsPayload,
+    collection_id: undefined,
+    color: undefined,
+  };
+
+  const legacyBasePayload = {
+    title: params.title,
+    description: params.description,
+    price: params.price,
+    image_url: mainImage,
+    category: primaryCategory,
+    category_id: primaryCategory,
+    available_today: params.pickup,
+    stock: params.stock,
+    pickup: params.pickup,
+    delivery: params.delivery,
+    is_published: params.isPublished,
+  };
+
+  const legacyProductDetailsPayload = {
+    ...legacyBasePayload,
+    features: params.features,
+    composition: params.composition,
+    return_conditions: params.returnConditions,
+  };
+
+  const modernPayload = {
+    ...productDetailsPayload,
+    main_image_url: mainImageForIndexedColumn,
+    image_urls: normalizedImageUrls.length > 0 ? normalizedImageUrls : (mainImage ? [mainImage] : []),
+    categories: normalizedCategories.length > 0 ? normalizedCategories : ["artisanat"],
+  };
+
+  const modernNoCollectionPayload = {
+    ...productDetailsNoCollectionPayload,
+    main_image_url: mainImageForIndexedColumn,
+    image_urls: normalizedImageUrls.length > 0 ? normalizedImageUrls : (mainImage ? [mainImage] : []),
+    categories: normalizedCategories.length > 0 ? normalizedCategories : ["artisanat"],
+  };
+
+  const modernNoColorPayload = {
+    ...productDetailsNoColorPayload,
+    main_image_url: mainImageForIndexedColumn,
+    image_urls: normalizedImageUrls.length > 0 ? normalizedImageUrls : (mainImage ? [mainImage] : []),
+    categories: normalizedCategories.length > 0 ? normalizedCategories : ["artisanat"],
+  };
+
+  const modernNoCollectionNoColorPayload = {
+    ...productDetailsNoCollectionNoColorPayload,
+    main_image_url: mainImageForIndexedColumn,
+    image_urls: normalizedImageUrls.length > 0 ? normalizedImageUrls : (mainImage ? [mainImage] : []),
+    categories: normalizedCategories.length > 0 ? normalizedCategories : ["artisanat"],
+  };
+
+  await runProductMutation({
+    path: `products?id=eq.${params.productId}`,
+    method: "PATCH",
+    accessToken: params.accessToken,
+    payloads: [
+      modernPayload,
+      modernNoCollectionPayload,
+      modernNoColorPayload,
+      modernNoCollectionNoColorPayload,
+      productDetailsPayload,
+      productDetailsNoCollectionPayload,
+      productDetailsNoColorPayload,
+      productDetailsNoCollectionNoColorPayload,
+      legacyProductDetailsPayload,
+      legacyBasePayload,
+    ],
+  });
 }
 
 export async function duplicateSellerProduct(params: {
@@ -568,12 +838,17 @@ export async function duplicateSellerProduct(params: {
     color: normalizedColor,
     price: params.product.price,
     stock: params.product.stock,
-    categories: [params.product.category].filter(Boolean),
+    categories: (params.product.categories && params.product.categories.length > 0 ? params.product.categories : [params.product.category]).filter(Boolean),
     pickup: params.product.pickup,
     delivery: params.product.delivery,
     isPublished: Boolean(params.product.isPublished),
-    mainImageUrl: params.product.image,
-    imageUrls: params.product.image ? [params.product.image] : [],
+    mainImageUrl: params.product.imageUrls?.[0] ?? params.product.image,
+    imageUrls:
+      params.product.imageUrls && params.product.imageUrls.length > 0
+        ? params.product.imageUrls
+        : params.product.image
+          ? [params.product.image]
+          : [],
   });
 }
 

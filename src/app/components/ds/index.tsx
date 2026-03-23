@@ -147,6 +147,7 @@ export function Input({
     >
       {icon && <span className="text-muted-foreground">{icon}</span>}
       <input
+        suppressHydrationWarning
         type={type}
         placeholder={placeholder}
         value={value ?? ""}

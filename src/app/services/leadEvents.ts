@@ -10,6 +10,7 @@ export interface LeadEvent {
   type: LeadEventType;
   at: string;
   sessionId: string;
+  actorUserId?: string;
   shopId?: string;
   productId?: string;
   metadata?: Record<string, string | number | boolean>;
@@ -17,6 +18,7 @@ export interface LeadEvent {
 
 interface TrackLeadEventInput {
   type: LeadEventType;
+  actorUserId?: string;
   shopId?: string;
   productId?: string;
   metadata?: Record<string, string | number | boolean>;
@@ -71,6 +73,7 @@ export function trackLeadEvent(input: TrackLeadEventInput): LeadEvent {
     type: input.type,
     at: new Date().toISOString(),
     sessionId: getSessionId(),
+    actorUserId: input.actorUserId,
     shopId: input.shopId,
     productId: input.productId,
     metadata: input.metadata,
@@ -83,7 +86,11 @@ export function trackLeadEvent(input: TrackLeadEventInput): LeadEvent {
   return event;
 }
 
-export function getLeadEvents(options?: { shopId?: string; sinceDays?: number }): LeadEvent[] {
+export function getLeadEvents(options?: {
+  shopId?: string;
+  sinceDays?: number;
+  excludeActorUserId?: string;
+}): LeadEvent[] {
   const events = readLeadEvents();
 
   const sinceDays = options?.sinceDays ?? 30;
@@ -91,11 +98,16 @@ export function getLeadEvents(options?: { shopId?: string; sinceDays?: number })
 
   return events.filter((event) => {
     if (options?.shopId && event.shopId !== options.shopId) return false;
+    if (options?.excludeActorUserId && event.actorUserId === options.excludeActorUserId) return false;
     return new Date(event.at).getTime() >= sinceTs;
   });
 }
 
-export function getLeadStats(options?: { shopId?: string; sinceDays?: number }): LeadStats {
+export function getLeadStats(options?: {
+  shopId?: string;
+  sinceDays?: number;
+  excludeActorUserId?: string;
+}): LeadStats {
   const events = getLeadEvents(options);
   const stats: LeadStats = {
     viewShop: 0,
@@ -119,4 +131,3 @@ export function getLeadStats(options?: { shopId?: string; sinceDays?: number }):
 
   return stats;
 }
-

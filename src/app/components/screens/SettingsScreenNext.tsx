@@ -436,7 +436,7 @@ export function SettingsScreenNext() {
       try {
         await logout();
       } finally {
-        push("/auth");
+        push("/home");
         setIsLoggingOut(false);
       }
     };

@@ -38,12 +38,43 @@ function AppleIcon({ className = "w-5 h-5" }: { className?: string }) {
   );
 }
 
+const POST_AUTH_REDIRECT_KEY = "mcl_auth_post_redirect_v1";
+
+function sanitizeRedirectPath(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value.trim();
+  if (!normalized.startsWith("/") || normalized.startsWith("//")) return null;
+  if (normalized === "/auth") return null;
+  return normalized;
+}
+
+function storePostAuthRedirect(path: string | null) {
+  if (typeof window === "undefined") return;
+  if (!path) {
+    window.sessionStorage.removeItem(POST_AUTH_REDIRECT_KEY);
+    return;
+  }
+  window.sessionStorage.setItem(POST_AUTH_REDIRECT_KEY, path);
+}
+
+function consumePostAuthRedirect() {
+  if (typeof window === "undefined") return null;
+  const stored = sanitizeRedirectPath(
+    window.sessionStorage.getItem(POST_AUTH_REDIRECT_KEY)
+  );
+  window.sessionStorage.removeItem(POST_AUTH_REDIRECT_KEY);
+  return stored;
+}
+
 export function AuthScreenNext() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const push = useCallback((path: string) => router.push(path), [router]);
   const replace = useCallback((path: string) => router.replace(path), [router]);
   const { signIn, signInWithGoogle, signUp, isAuthenticated, isLoading, user, logout, switchRole, updateProfile } = useAuth();
+  const requestedRole = searchParams.get("role");
+  const requestedNextPath = sanitizeRedirectPath(searchParams.get("next"));
+  const searchParamsKey = searchParams.toString();
   const [role, setRole] = useState<"buyer" | "seller" | null>(null);
   const [mode, setMode] = useState<"login" | "signup">("signup");
   const [showPassword, setShowPassword] = useState(false);
@@ -58,26 +89,57 @@ export function AuthScreenNext() {
   const [profileLastName, setProfileLastName] = useState("");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState<string | null>(null);
+  const [isHandlingExternalAuthReturn, setIsHandlingExternalAuthReturn] = useState(false);
 
   // Pre-select role from URL params (e.g. /auth?role=seller)
   useEffect(() => {
-    const roleParam = searchParams.get("role");
-    if (roleParam === "seller" || roleParam === "buyer") {
-      setRole(roleParam);
+    if (requestedRole === "seller" || requestedRole === "buyer") {
+      setRole(requestedRole);
     }
-  }, [searchParams]);
+  }, [requestedRole]);
+
+  useEffect(() => {
+    storePostAuthRedirect(requestedNextPath);
+  }, [requestedNextPath]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const hash = window.location.hash.startsWith("#")
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    const hashParams = new URLSearchParams(hash);
+
+    const hasExternalAuthArtifacts = Boolean(
+      hashParams.get("access_token") ||
+      hashParams.get("refresh_token") ||
+      hashParams.get("error") ||
+      hashParams.get("error_description") ||
+      searchParams.get("access_token") ||
+      searchParams.get("refresh_token") ||
+      searchParams.get("code") ||
+      searchParams.get("error") ||
+      searchParams.get("error_description")
+    );
+
+    setIsHandlingExternalAuthReturn(hasExternalAuthArtifacts);
+    if (hasExternalAuthArtifacts) {
+      setErrorMessage(null);
+    }
+  }, [searchParams, searchParamsKey]);
 
   // If authenticated and a role is explicitly requested, apply and redirect.
   useEffect(() => {
-    const requestedRole = searchParams.get("role");
     if (!isAuthenticated || !user) return;
 
     const run = async () => {
+      const redirectPath = requestedNextPath ?? consumePostAuthRedirect();
+
       if (requestedRole === "seller" && user.roles.includes("seller")) {
         if (user.role !== "seller") {
           await switchRole("seller");
         }
-        replace("/dashboard");
+        replace(redirectPath ?? "/dashboard");
         return;
       }
 
@@ -90,22 +152,26 @@ export function AuthScreenNext() {
         if (user.role !== "buyer") {
           await switchRole("buyer");
         }
-        replace("/home");
+        replace(redirectPath ?? "/home");
+        return;
+      }
+
+      if (redirectPath) {
+        replace(redirectPath);
       }
     };
 
     void run();
-  }, [isAuthenticated, user, searchParams, replace, switchRole]);
+  }, [isAuthenticated, user, requestedRole, requestedNextPath, replace, switchRole]);
 
   useEffect(() => {
     if (!isAuthenticated || !user) return;
-    const requestedRole = searchParams.get("role");
-    if (requestedRole === "seller" || requestedRole === "buyer") return;
+    if (requestedRole === "seller" || requestedRole === "buyer" || requestedNextPath) return;
 
     if (user.role === "seller") {
       replace("/dashboard");
     }
-  }, [isAuthenticated, user, searchParams, replace]);
+  }, [isAuthenticated, user, requestedRole, requestedNextPath, replace]);
 
   useEffect(() => {
     if (!isAuthenticated || !user) return;
@@ -113,6 +179,18 @@ export function AuthScreenNext() {
     setProfileLastName(user.lastName ?? "");
     setProfileMessage(null);
   }, [isAuthenticated, user]);
+
+  if (isLoading && isHandlingExternalAuthReturn) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background px-6">
+        <Logo size="xl" />
+        <h2 className="mt-6 text-center">Connexion en cours</h2>
+        <p className="mt-2 max-w-sm text-center text-sm text-muted-foreground">
+          Finalisation de votre connexion Google...
+        </p>
+      </div>
+    );
+  }
 
   // If user is already logged in, show profile
   if (isAuthenticated && user) {
@@ -312,11 +390,6 @@ export function AuthScreenNext() {
           });
         }
 
-        if (role === "seller") {
-          push("/siret");
-        } else {
-          push("/home");
-        }
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Impossible de se connecter pour le moment.";

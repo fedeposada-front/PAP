@@ -76,7 +76,11 @@ export function ProductCard({
         )}
       </div>
       <div className="p-3">
-        <p className="text-xs text-muted-foreground mb-0.5 truncate">{getCategoryLabel(product.category)}</p>
+        <p className="text-xs text-muted-foreground mb-0.5 truncate">
+          {(product.categories && product.categories.length > 0 ? product.categories : [product.category])
+            .map((category) => getCategoryLabel(category))
+            .join(" · ")}
+        </p>
         <p className="text-sm truncate mb-1">{product.title}</p>
         <div className="flex items-center justify-between">
           <span className="text-primary">{product.price.toFixed(2)} €</span>

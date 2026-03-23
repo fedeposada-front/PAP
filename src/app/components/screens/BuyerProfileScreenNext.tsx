@@ -12,7 +12,7 @@ import {
   type FavoriteProductItem,
   type FollowedShopItem,
 } from "../../services/buyerCollections";
-import { getShopHref } from "../../utils/shopRouting";
+import { getProductHref, getShopHref } from "../../utils/shopRouting";
 import { getCategoryLabel } from "../../data/catalog";
 import { unfollowShop } from "../../services/shopFollowers";
 
@@ -165,7 +165,7 @@ export function BuyerProfileScreenNext() {
   const handleLogout = () => {
     const run = async () => {
       await logout();
-      push("/auth");
+      push("/home");
     };
     void run();
   };
@@ -265,7 +265,15 @@ export function BuyerProfileScreenNext() {
             {favoriteProducts.map((product) => (
               <button
                 key={product.id}
-                onClick={() => push(`/product/${product.id}`)}
+                onClick={() =>
+                  push(
+                    getProductHref({
+                      id: product.id,
+                      shopSlug: product.shopSlug,
+                      shopName: product.shopName,
+                    })
+                  )
+                }
                 className="w-full flex items-center justify-between rounded-xl bg-muted/40 px-3 py-2.5 hover:bg-muted/70 transition-colors text-left"
               >
                 <div className="min-w-0">
@@ -296,9 +304,17 @@ export function BuyerProfileScreenNext() {
               <p className="text-sm text-muted-foreground">Aucune boutique suivie pour le moment.</p>
             )}
             {followedShops.map((shop) => (
-              <button
+              <div
                 key={shop.id}
                 onClick={() => push(getShopHref(shop))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    push(getShopHref(shop));
+                  }
+                }}
+                role="button"
+                tabIndex={0}
                 className="w-full flex items-center justify-between gap-3 rounded-xl bg-muted/40 px-3 py-2.5 hover:bg-muted/70 transition-colors text-left"
               >
                 <div className="min-w-0">
@@ -320,7 +336,7 @@ export function BuyerProfileScreenNext() {
                   </button>
                   <ChevronRight className="w-4 h-4 text-muted-foreground" />
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         </div>

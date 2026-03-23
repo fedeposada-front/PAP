@@ -15,3 +15,12 @@ export function getShopHref(shop: { id: string; name: string; slug?: string | nu
   const slug = (shop.slug ?? "").trim() || toShopSlug(shop.name);
   return `/shop/${encodeURIComponent(slug)}`;
 }
+
+export function getProductHref(product: {
+  id: string;
+  shopName?: string | null;
+  shopSlug?: string | null;
+}): string {
+  const slug = (product.shopSlug ?? "").trim() || toShopSlug(product.shopName ?? "");
+  return `/${encodeURIComponent(slug)}/${encodeURIComponent(product.id)}`;
+}

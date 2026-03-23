@@ -1,5 +1,6 @@
 import { CATEGORY_SUBCATEGORIES } from "../data/catalog";
 import type { ShopTeamMember } from "../types/catalog";
+import { toShopSlug } from "../utils/shopRouting";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -11,6 +12,7 @@ const CATEGORY_ID_BY_LABEL = new Map(
 
 interface ShopSettingsRow {
   id: string;
+  slug?: string | null;
   name: string;
   category: string;
   description: string | null;
@@ -58,7 +60,7 @@ interface OwnedShopLookupRow {
 }
 
 const SHOP_SETTINGS_SELECT =
-  "id,name,category,description,story,team_members,address,city,postal_code,phone,email,website,hours,opening_hours,open_holidays,delivery,pickup_today,delivery_hand,delivery_post,delivery_carrier,logo_image_url,banner_image_url,is_published,lat,lng";
+  "id,slug,name,category,description,story,team_members,address,city,postal_code,phone,email,website,hours,opening_hours,open_holidays,delivery,pickup_today,delivery_hand,delivery_post,delivery_carrier,logo_image_url,banner_image_url,is_published,lat,lng";
 
 const SHOP_SETTINGS_FALLBACK_SELECT =
   "id,name,category,description,address,city,postal_code,phone,hours,delivery,pickup_today,is_published,lat,lng";
@@ -100,6 +102,7 @@ function serializeTeamMembers(teamMembers: ShopTeamMember[]) {
 function mapShopSettingsRow(row: ShopSettingsRow): ShopSettingsData {
   return {
     ...row,
+    slug: row.slug?.trim() || toShopSlug(row.name),
     teamMembers: normalizeTeamMembers(row.team_members),
   };
 }
@@ -109,6 +112,7 @@ function mapFallbackShopSettingsRow(
 ): ShopSettingsData {
   return {
     id: row.id,
+    slug: toShopSlug(row.name),
     name: row.name,
     category: row.category,
     description: row.description ?? "",

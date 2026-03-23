@@ -1,3 +1,5 @@
+import { toShopSlug } from "../utils/shopRouting";
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
@@ -36,6 +38,7 @@ interface SellerShopRow {
 interface FeedShopRow {
   id: string;
   name: string;
+  slug?: string | null;
   logo_image_url: string | null;
 }
 
@@ -46,19 +49,6 @@ interface NewsLikeRow {
 
 function hasSupabaseConfig() {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
-}
-
-function toShopSlug(name: string): string {
-  const normalized = name
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .replace(/_+/g, "_");
-
-  return normalized || "boutique";
 }
 
 function encodeInList(values: string[]): string {
@@ -168,8 +158,14 @@ export async function fetchNewsFeed(params?: {
 
   const [shopRows, likeRows, likedRows] = await Promise.all([
     requestSupabaseAnon<FeedShopRow[]>(
-      `shops?id=in.(${encodeInList(shopIds)})&select=id,name,logo_image_url`
-    ),
+      `shops?id=in.(${encodeInList(shopIds)})&select=id,name,slug,logo_image_url`
+    ).catch(async (error) => {
+      const message = error instanceof Error ? error.message : "";
+      if (!/slug|schema cache|column/i.test(message)) throw error;
+      return requestSupabaseAnon<FeedShopRow[]>(
+        `shops?id=in.(${encodeInList(shopIds)})&select=id,name,logo_image_url`
+      );
+    }),
     requestSupabaseAnon<NewsLikeRow[]>(
       `shop_news_likes?news_id=in.(${encodeInList(newsIds)})&select=news_id,user_id`
     ),
@@ -197,7 +193,7 @@ export async function fetchNewsFeed(params?: {
       return {
         ...item,
         shopName: shop.name,
-        shopSlug: toShopSlug(shop.name),
+        shopSlug: shop.slug?.trim() || toShopSlug(shop.name),
         shopImageUrl: shop.logo_image_url ?? item.imageUrl,
         likeCount: likeCountByNewsId.get(row.id) ?? 0,
         likedByMe: likedByMe.has(row.id),

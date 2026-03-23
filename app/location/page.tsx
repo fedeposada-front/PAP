@@ -209,6 +209,7 @@ export default function LocationPage() {
           </span>
           <input
             ref={inputRef}
+            suppressHydrationWarning
             type="text"
             placeholder="Ville ou code postal..."
             value={search}

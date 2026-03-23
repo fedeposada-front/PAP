@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Check,
   ChevronRight,
@@ -24,17 +24,18 @@ import { fetchProductById, fetchShopById } from "../../services/catalog";
 import { fetchSellerProducts } from "../../services/sellerProducts";
 import { fetchShopSettings } from "../../services/shopSettings";
 import type { Product, Shop } from "../../types/catalog";
-import { getShopHref } from "../../utils/shopRouting";
+import { getProductHref, getShopHref } from "../../utils/shopRouting";
 
 type ProductTab = "description" | "features" | "composition" | "returns";
 
 export function ProductScreenNext() {
-  const params = useParams<{ id: string }>();
-  const id = params.id;
+  const params = useParams<{ id?: string; productId?: string; shopSlug?: string }>();
+  const pathname = usePathname();
+  const id = params.productId ?? params.id ?? "";
   const searchParams = useSearchParams();
   const router = useRouter();
   const push = (path: string) => router.push(path);
-  const { addItem, items } = useCart();
+  const { addItem, totalItems } = useCart();
   const { user, accessToken } = useAuth();
   const [product, setProduct] = useState<Product | null>(null);
   const [shop, setShop] = useState<Shop | null>(null);
@@ -42,10 +43,15 @@ export function ProductScreenNext() {
   const [quantity, setQuantity] = useState(1);
   const [activeTab, setActiveTab] = useState<ProductTab>("description");
   const [added, setAdded] = useState(false);
+  const [cartNotice, setCartNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [cartPulse, setCartPulse] = useState(false);
   const [liked, setLiked] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const isPreviewMode = searchParams.get("preview") === "1";
+  const addedTimerRef = useRef<number | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+  const pulseTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,7 +71,7 @@ export function ProductScreenNext() {
             if (privateShop && privateShop.id === nextProduct.shopId) {
               nextShop = {
                 id: privateShop.id,
-                slug: undefined,
+                slug: privateShop.slug ?? undefined,
                 name: privateShop.name,
                 category: privateShop.category,
                 image: privateShop.logo_image_url ?? "https://placehold.co/640x640?text=MonCadeauLocal",
@@ -123,6 +129,28 @@ export function ProductScreenNext() {
     setActiveImageIndex((prev) => Math.min(prev, Math.max(0, productImages.length - 1)));
   }, [productImages]);
 
+  useEffect(() => {
+    return () => {
+      if (addedTimerRef.current) window.clearTimeout(addedTimerRef.current);
+      if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+      if (pulseTimerRef.current) window.clearTimeout(pulseTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isPreviewMode || !product) return;
+
+    const canonicalPath = getProductHref({
+      id: product.id,
+      shopSlug: shop?.slug ?? product.shopSlug,
+      shopName: shop?.name ?? product.shopName,
+    });
+
+    if (pathname !== canonicalPath) {
+      router.replace(canonicalPath);
+    }
+  }, [isPreviewMode, pathname, product, router, shop?.name, shop?.slug]);
+
   if (loadError) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background px-4">
@@ -148,21 +176,65 @@ export function ProductScreenNext() {
   }
 
   const effectiveColor = product.color?.trim() || product.colors?.find((entry) => entry.trim()) || "";
+  const productStock = Number.isFinite(product.stock) ? Math.max(0, product.stock) : 0;
+  const maxSelectableQuantity = Math.max(1, productStock);
+  const isOutOfStock = productStock <= 0;
   const infoTabs = [
     { id: "features" as const, label: "CARACTÉRISTIQUES", content: product.features?.trim() || "" },
     { id: "composition" as const, label: "COMPOSITION", content: product.composition?.trim() || "" },
   ].filter((tab) => tab.content);
   const currentTab = infoTabs.find((tab) => tab.id === activeTab) ?? infoTabs[0] ?? null;
 
+  const showCartNotice = (type: "success" | "error", message: string) => {
+    setCartNotice({ type, message });
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setCartNotice(null), 2600);
+  };
+
+  const triggerAddedState = () => {
+    setAdded(true);
+    setCartPulse(true);
+
+    if (addedTimerRef.current) window.clearTimeout(addedTimerRef.current);
+    if (pulseTimerRef.current) window.clearTimeout(pulseTimerRef.current);
+
+    addedTimerRef.current = window.setTimeout(() => setAdded(false), 1800);
+    pulseTimerRef.current = window.setTimeout(() => setCartPulse(false), 900);
+  };
+
   const handleAddToCart = (goToCart = false) => {
-    for (let index = 0; index < quantity; index += 1) {
-      addItem(product, product.pickup ? "pickup" : "delivery", effectiveColor || undefined);
+    const result = addItem(
+      product,
+      product.pickup ? "pickup" : "delivery",
+      effectiveColor || undefined,
+      quantity
+    );
+
+    if (!result.ok) {
+      showCartNotice(
+        "error",
+        result.reason === "out_of_stock"
+          ? "Ce produit n'est plus disponible."
+          : `Stock maximum atteint${result.maxQty > 0 ? ` (${result.maxQty})` : ""}.`
+      );
+      return;
     }
+
+    const addedLabel = result.delta > 1 ? `${result.delta} produits ajoutés au panier.` : "Produit ajouté au panier.";
+    const partialLabel =
+      result.reason === "stock_limit" && result.delta < quantity
+        ? `${result.delta} produit${result.delta > 1 ? "s" : ""} ajouté${result.delta > 1 ? "s" : ""}. Stock maximum atteint.`
+        : addedLabel;
+
+    showCartNotice("success", partialLabel);
+    triggerAddedState();
+
+    if (result.qty >= result.maxQty && result.maxQty > 0) {
+      setQuantity(Math.min(quantity, maxSelectableQuantity));
+    }
+
     if (goToCart) {
       push("/cart");
-    } else {
-      setAdded(true);
-      setTimeout(() => setAdded(false), 2000);
     }
   };
 
@@ -184,18 +256,26 @@ export function ProductScreenNext() {
           </Button>
           <button
             onClick={() => push("/cart")}
-            className="relative w-10 h-10 flex items-center justify-center rounded-full bg-muted hover:bg-muted/80 transition-colors"
+            className={`relative w-10 h-10 flex items-center justify-center rounded-full bg-muted transition-all hover:bg-muted/80 ${
+              cartPulse ? "scale-110 ring-4 ring-coral/15" : ""
+            }`}
             aria-label="Panier"
           >
             <ShoppingBag className="w-5 h-5" />
-            {items.length > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-coral text-white text-[10px] rounded-full flex items-center justify-center">
-                {items.length}
+            {totalItems > 0 && (
+              <span className={`absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-coral text-white text-[10px] rounded-full flex items-center justify-center ${cartPulse ? "animate-pulse" : ""}`}>
+                {totalItems}
               </span>
             )}
           </button>
           <button
-            onClick={() => push("/messages")}
+            onClick={() => {
+              if (!user?.id || !accessToken) {
+                push(`/auth?next=${encodeURIComponent("/messages")}`);
+                return;
+              }
+              push("/messages");
+            }}
             className="w-10 h-10 flex items-center justify-center rounded-full bg-muted hover:bg-muted/80 transition-colors"
             aria-label="Messages"
           >
@@ -290,6 +370,18 @@ export function ProductScreenNext() {
           </h1>
           <p className="mt-5 text-[1.85rem] tracking-[-0.02em] text-[#f07d86] lg:text-[2rem]">{product.price.toFixed(2)} €</p>
 
+          {cartNotice && (
+            <div
+              className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${
+                cartNotice.type === "success"
+                  ? "border-green-200 bg-green-50 text-[#2e7d32]"
+                  : "border-amber-200 bg-amber-50 text-amber-900"
+              }`}
+            >
+              {cartNotice.message}
+            </div>
+          )}
+
           <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[1rem] text-slate-600">
             {product.availableToday && (
               <span className="inline-flex items-center gap-2 text-[#3a8b46]">
@@ -306,7 +398,6 @@ export function ProductScreenNext() {
                 <Truck className="w-3 h-3" /> Livraison
               </span>
             )}
-            <span>Stock : {product.stock}</span>
           </div>
 
           <div className="mt-8">
@@ -352,11 +443,16 @@ export function ProductScreenNext() {
               fullWidth
               variant="outline"
               size="lg"
-              icon={<ShoppingBag className="w-5 h-5" />}
-              className="h-16 rounded-[1.7rem] border-white/70 bg-white text-[1.1rem] shadow-[0_10px_24px_rgba(15,23,42,0.06)]"
+              disabled={isOutOfStock}
+              icon={added ? <Check className="w-5 h-5" /> : <ShoppingBag className="w-5 h-5" />}
+              className={`h-16 rounded-[1.7rem] border-white/70 text-[1.1rem] shadow-[0_10px_24px_rgba(15,23,42,0.06)] ${
+                added
+                  ? "bg-[#eef8e9] text-[#2e7d32]"
+                  : "bg-white"
+              }`}
               onClick={() => handleAddToCart(false)}
             >
-              {added ? "Ajouté au panier" : "Ajouter au panier"}
+              {isOutOfStock ? "Rupture de stock" : added ? "Ajouté au panier" : "Ajouter au panier"}
             </Button>
             <Button
               fullWidth
@@ -367,10 +463,15 @@ export function ProductScreenNext() {
               onClick={() => {
                 trackLeadEvent({
                   type: "click_message",
+                  actorUserId: user?.id,
                   shopId: product.shopId,
                   productId: product.id,
                   metadata: { source: "product_screen" },
                 });
+                if (!user?.id || !accessToken) {
+                  push(`/auth?next=${encodeURIComponent(`/messages?shop=${product.shopId}`)}`);
+                  return;
+                }
                 push(`/messages?shop=${product.shopId}`);
               }}
             >
@@ -418,8 +519,11 @@ export function ProductScreenNext() {
             <span className="min-w-8 text-center">{quantity}</span>
             <button
               type="button"
-              onClick={() => setQuantity((prev) => Math.min(product.stock || 99, prev + 1))}
-              className="flex h-8 w-8 items-center justify-center"
+              onClick={() => setQuantity((prev) => Math.min(maxSelectableQuantity, prev + 1))}
+              disabled={isOutOfStock || quantity >= productStock}
+              className={`flex h-8 w-8 items-center justify-center ${
+                isOutOfStock || quantity >= productStock ? "text-slate-300" : ""
+              }`}
             >
               <Plus className="w-4 h-4" />
             </button>
@@ -427,11 +531,14 @@ export function ProductScreenNext() {
           <Button
             fullWidth
             size="lg"
+            disabled={isOutOfStock}
             icon={added ? <Check className="w-5 h-5" /> : <ShoppingBag className="w-5 h-5" />}
-            className="rounded-full bg-[#ee7f88] hover:bg-[#ea6f7a]"
+            className={`rounded-full ${
+              added ? "bg-[#2e7d32] hover:bg-[#276c2c]" : "bg-[#ee7f88] hover:bg-[#ea6f7a]"
+            }`}
             onClick={() => handleAddToCart(false)}
           >
-            {added ? "Ajouté !" : "Ajouter au panier"}
+            {isOutOfStock ? "Rupture de stock" : added ? "Ajouté !" : "Ajouter au panier"}
           </Button>
         </div>
       </div>

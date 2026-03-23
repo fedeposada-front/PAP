@@ -29,7 +29,7 @@ export function SplashScreenNext() {
 
     const targetPath = isAuthenticated
       ? (user?.role === "seller" ? "/dashboard" : "/home")
-      : "/auth";
+      : "/home";
 
     const timer = setTimeout(() => router.push(targetPath), 1200);
     return () => clearTimeout(timer);

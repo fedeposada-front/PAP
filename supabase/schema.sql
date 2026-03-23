@@ -2,6 +2,7 @@
 -- Run in Supabase SQL Editor
 
 create extension if not exists pgcrypto;
+create extension if not exists unaccent;
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -161,6 +162,7 @@ $$;
 create table if not exists public.shops (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid references auth.users(id) on delete set null,
+  slug text,
   name text not null,
   category text not null,
   category_id text default 'artisanat',
@@ -187,6 +189,80 @@ create table if not exists public.shops (
 
 alter table public.shops add column if not exists is_published boolean not null default true;
 alter table public.shops add column if not exists category_id text default 'artisanat';
+alter table public.shops add column if not exists slug text;
+
+create or replace function public.slugify_shop_name(input text)
+returns text
+language sql
+immutable
+as $$
+  select coalesce(
+    nullif(
+      trim(
+        both '_'
+        from regexp_replace(
+          regexp_replace(lower(unaccent(coalesce(input, ''))), '[^a-z0-9]+', '_', 'g'),
+          '_+',
+          '_',
+          'g'
+        )
+      ),
+      ''
+    ),
+    'boutique'
+  );
+$$;
+
+create or replace function public.assign_shop_slug()
+returns trigger
+language plpgsql
+as $$
+declare
+  base_slug text;
+  candidate_slug text;
+  suffix integer := 2;
+begin
+  base_slug := public.slugify_shop_name(new.name);
+  candidate_slug := base_slug;
+
+  while exists (
+    select 1
+    from public.shops s
+    where s.slug = candidate_slug
+      and (new.id is null or s.id <> new.id)
+  ) loop
+    candidate_slug := base_slug || '_' || suffix::text;
+    suffix := suffix + 1;
+  end loop;
+
+  new.slug := candidate_slug;
+  return new;
+end
+$$;
+
+with ranked_shops as (
+  select
+    id,
+    public.slugify_shop_name(name) as base_slug,
+    row_number() over (
+      partition by public.slugify_shop_name(name)
+      order by created_at asc, id asc
+    ) as rn
+  from public.shops
+),
+generated_slugs as (
+  select
+    id,
+    case
+      when rn = 1 then base_slug
+      else base_slug || '_' || rn::text
+    end as slug
+  from ranked_shops
+)
+update public.shops s
+set slug = g.slug
+from generated_slugs g
+where s.id = g.id;
 
 create table if not exists public.followed_shops (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -428,6 +504,18 @@ $$;
 do $$
 begin
   if not exists (
+    select 1 from pg_constraint where conname = 'shops_slug_format'
+  ) then
+    alter table public.shops
+      add constraint shops_slug_format
+      check (slug is null or slug ~ '^[a-z0-9]+(?:_[a-z0-9]+)*$');
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
     select 1 from pg_constraint where conname = 'products_category_sync_check'
   ) then
     alter table public.products
@@ -441,6 +529,7 @@ create index if not exists idx_shops_city on public.shops(city);
 create index if not exists idx_shops_category on public.shops(category);
 create index if not exists idx_shops_category_id on public.shops(category_id);
 create index if not exists idx_shops_is_published on public.shops(is_published);
+create unique index if not exists uniq_shops_slug on public.shops(slug) where slug is not null;
 create unique index if not exists uniq_shops_owner_user_id on public.shops(owner_user_id) where owner_user_id is not null;
 create index if not exists idx_profiles_active_role on public.profiles(active_role);
 create index if not exists idx_profiles_siret_verified on public.profiles(siret_verified);
@@ -483,6 +572,11 @@ drop trigger if exists trg_shops_updated_at on public.shops;
 create trigger trg_shops_updated_at
 before update on public.shops
 for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_shops_assign_slug on public.shops;
+create trigger trg_shops_assign_slug
+before insert or update of name on public.shops
+for each row execute function public.assign_shop_slug();
 
 drop trigger if exists trg_products_updated_at on public.products;
 create trigger trg_products_updated_at
@@ -982,6 +1076,93 @@ create trigger trg_payouts_updated_at
 before update on public.payouts
 for each row execute function public.set_updated_at();
 
+create table if not exists public.conversations (
+  id uuid primary key default gen_random_uuid(),
+  buyer_user_id uuid not null references auth.users(id) on delete cascade,
+  shop_id uuid not null references public.shops(id) on delete cascade,
+  last_message_at timestamptz not null default now(),
+  last_message_preview text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.messages (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  sender_user_id uuid not null references auth.users(id) on delete cascade,
+  body text not null,
+  created_at timestamptz not null default now(),
+  read_at timestamptz
+);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'conversations_buyer_shop_unique'
+      and conrelid = 'public.conversations'::regclass
+  ) then
+    alter table public.conversations
+      add constraint conversations_buyer_shop_unique
+      unique (buyer_user_id, shop_id);
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'messages_body_not_blank'
+      and conrelid = 'public.messages'::regclass
+  ) then
+    alter table public.messages
+      add constraint messages_body_not_blank
+      check (char_length(btrim(body)) > 0);
+  end if;
+end
+$$;
+
+create index if not exists idx_conversations_buyer_last_message_at
+  on public.conversations(buyer_user_id, last_message_at desc);
+
+create index if not exists idx_conversations_shop_last_message_at
+  on public.conversations(shop_id, last_message_at desc);
+
+create index if not exists idx_messages_conversation_created_at
+  on public.messages(conversation_id, created_at asc);
+
+create index if not exists idx_messages_sender_created_at
+  on public.messages(sender_user_id, created_at desc);
+
+create or replace function public.sync_conversation_last_message()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.conversations
+  set
+    last_message_at = new.created_at,
+    last_message_preview = left(new.body, 160),
+    updated_at = now()
+  where id = new.conversation_id;
+
+  return new;
+end
+$$;
+
+drop trigger if exists trg_conversations_updated_at on public.conversations;
+create trigger trg_conversations_updated_at
+before update on public.conversations
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_messages_sync_conversation on public.messages;
+create trigger trg_messages_sync_conversation
+after insert on public.messages
+for each row execute function public.sync_conversation_last_message();
+
 alter table public.profiles enable row level security;
 alter table public.category_groups enable row level security;
 alter table public.categories enable row level security;
@@ -1002,6 +1183,8 @@ alter table public.payment_attempts enable row level security;
 alter table public.shipments enable row level security;
 alter table public.pickup_reservations enable row level security;
 alter table public.payouts enable row level security;
+alter table public.conversations enable row level security;
+alter table public.messages enable row level security;
 
 grant usage on schema public to anon, authenticated, service_role;
 
@@ -1035,6 +1218,8 @@ grant select, insert, update on public.shipments to authenticated;
 grant select, insert, update on public.pickup_reservations to authenticated;
 grant select on public.payment_attempts to authenticated;
 grant select on public.payouts to authenticated;
+grant select, insert on public.conversations to authenticated;
+grant select, insert on public.messages to authenticated;
 
 drop policy if exists "users can read own profile" on public.profiles;
 create policy "users can read own profile"
@@ -1595,5 +1780,68 @@ using (
   exists (
     select 1 from public.shops s
     where s.id = payouts.shop_id and s.owner_user_id = auth.uid()
+  )
+);
+
+drop policy if exists "buyers and shop owners can read conversations" on public.conversations;
+create policy "buyers and shop owners can read conversations"
+on public.conversations
+for select
+to authenticated
+using (
+  auth.uid() = buyer_user_id
+  or exists (
+    select 1 from public.shops s
+    where s.id = conversations.shop_id and s.owner_user_id = auth.uid()
+  )
+);
+
+drop policy if exists "buyers can create conversations" on public.conversations;
+create policy "buyers can create conversations"
+on public.conversations
+for insert
+to authenticated
+with check (
+  auth.uid() = buyer_user_id
+  and exists (
+    select 1 from public.shops s
+    where s.id = conversations.shop_id
+  )
+);
+
+drop policy if exists "participants can read messages" on public.messages;
+create policy "participants can read messages"
+on public.messages
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.conversations c
+    join public.shops s on s.id = c.shop_id
+    where c.id = messages.conversation_id
+      and (
+        c.buyer_user_id = auth.uid()
+        or s.owner_user_id = auth.uid()
+      )
+  )
+);
+
+drop policy if exists "participants can send messages" on public.messages;
+create policy "participants can send messages"
+on public.messages
+for insert
+to authenticated
+with check (
+  auth.uid() = sender_user_id
+  and exists (
+    select 1
+    from public.conversations c
+    join public.shops s on s.id = c.shop_id
+    where c.id = messages.conversation_id
+      and (
+        c.buyer_user_id = auth.uid()
+        or s.owner_user_id = auth.uid()
+      )
   )
 );

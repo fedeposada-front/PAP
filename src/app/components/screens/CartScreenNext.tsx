@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Trash2,
@@ -11,11 +12,27 @@ import {
 } from "lucide-react";
 import { Button, Badge, Header } from "../ds";
 import { useCart } from "../CartContext";
+import { getProductHref } from "../../utils/shopRouting";
 
 export function CartScreenNext() {
   const router = useRouter();
   const push = (path: string) => router.push(path);
   const { items, updateQty, removeItem, toggleMode, subtotal, buyerFee, total, totalItems } = useCart();
+  const [cartNotice, setCartNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+  const hasStockIssues = items.some((item) => item.qty > Math.max(0, item.product.stock));
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
+
+  const flashCartNotice = (message: string) => {
+    setCartNotice(message);
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setCartNotice(null), 2600);
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-background pb-16">
@@ -24,6 +41,11 @@ export function CartScreenNext() {
       <div className="flex-1 lg:max-w-4xl lg:mx-auto lg:w-full lg:flex lg:gap-8 lg:py-6 lg:px-8">
         {/* Items */}
         <div className="flex-1 px-4 lg:px-0 py-4 space-y-3">
+          {cartNotice && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {cartNotice}
+            </div>
+          )}
           {items.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20">
               <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mb-4">
@@ -48,7 +70,15 @@ export function CartScreenNext() {
                     src={item.product.image}
                     alt={item.product.title}
                     className="w-20 h-20 rounded-xl object-cover flex-shrink-0 cursor-pointer"
-                    onClick={() => push(`/product/${item.product.id}`)}
+                    onClick={() =>
+                      push(
+                        getProductHref({
+                          id: item.product.id,
+                          shopSlug: item.product.shopSlug,
+                          shopName: item.product.shopName,
+                        })
+                      )
+                    }
                   />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-muted-foreground">
@@ -56,7 +86,15 @@ export function CartScreenNext() {
                     </p>
                     <p
                       className="text-sm truncate cursor-pointer hover:text-coral transition-colors"
-                      onClick={() => push(`/product/${item.product.id}`)}
+                      onClick={() =>
+                        push(
+                          getProductHref({
+                            id: item.product.id,
+                            shopSlug: item.product.shopSlug,
+                            shopName: item.product.shopName,
+                          })
+                        )
+                      }
                     >
                       {item.product.title}
                     </p>
@@ -88,8 +126,18 @@ export function CartScreenNext() {
                     </button>
                     <span className="w-6 text-center">{item.qty}</span>
                     <button
-                      onClick={() => updateQty(item.product.id, 1, item.color)}
-                      className="w-8 h-8 flex items-center justify-center rounded-full border border-border hover:bg-muted transition-colors"
+                      onClick={() => {
+                        const result = updateQty(item.product.id, 1, item.color);
+                        if (!result.ok && result.reason === "stock_limit") {
+                          flashCartNotice(`Stock maximum atteint pour "${item.product.title}".`);
+                        }
+                      }}
+                      disabled={item.qty >= Math.max(0, item.product.stock)}
+                      className={`w-8 h-8 flex items-center justify-center rounded-full border border-border transition-colors ${
+                        item.qty >= Math.max(0, item.product.stock)
+                          ? "cursor-not-allowed text-muted-foreground/40"
+                          : "hover:bg-muted"
+                      }`}
                     >
                       <Plus className="w-3.5 h-3.5" />
                     </button>
@@ -122,6 +170,11 @@ export function CartScreenNext() {
                     )}
                   </div>
                 </div>
+                {item.qty >= Math.max(0, item.product.stock) && (
+                  <p className="mt-2 text-xs text-amber-700">
+                    Stock maximum atteint pour ce produit.
+                  </p>
+                )}
               </div>
             ))
           )}
@@ -157,6 +210,7 @@ export function CartScreenNext() {
                 fullWidth
                 size="lg"
                 className="mt-5"
+                disabled={hasStockIssues}
                 onClick={() => push("/checkout")}
               >
                 Commander
@@ -187,8 +241,8 @@ export function CartScreenNext() {
             <span>Total</span>
             <span className="text-xl text-coral">{total.toFixed(2)} €</span>
           </div>
-          <Button fullWidth size="lg" onClick={() => push("/checkout")}>
-            Commander · {total.toFixed(2)} €
+          <Button fullWidth size="lg" disabled={hasStockIssues} onClick={() => push("/checkout")}>
+            {hasStockIssues ? "Stock à corriger" : `Commander · ${total.toFixed(2)} €`}
           </Button>
         </div>
       )}

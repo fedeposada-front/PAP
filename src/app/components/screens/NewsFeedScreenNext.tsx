@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Heart } from "lucide-react";
 import { Header } from "../ds";
 import { useAuth } from "../AuthContext";
@@ -24,6 +24,7 @@ function formatNewsDate(value: string): string {
 
 export function NewsFeedScreenNext() {
   const router = useRouter();
+  const pathname = usePathname();
   const push = (path: string) => router.push(path);
   const { user, accessToken } = useAuth();
   const [items, setItems] = useState<FeedNewsItem[]>([]);
@@ -63,7 +64,7 @@ export function NewsFeedScreenNext() {
   const handleToggleLike = (item: FeedNewsItem) => {
     const run = async () => {
       if (!user?.id || !accessToken) {
-        push("/auth");
+        push(`/auth?next=${encodeURIComponent(pathname)}`);
         return;
       }
 

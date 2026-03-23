@@ -8,6 +8,7 @@ type OpeningHours = Record<string, { open?: boolean; openTime?: string; closeTim
 
 interface ShopRow {
   id: string;
+  slug?: string | null;
   name: string;
   category: string;
   description: string | null;
@@ -15,6 +16,7 @@ interface ShopRow {
   team_members?: unknown;
   address: string;
   city: string;
+  postal_code?: string | null;
   phone: string | null;
   is_open: boolean;
   pickup_today: boolean;
@@ -53,6 +55,10 @@ function mapTeamMembers(value: unknown): ShopTeamMember[] {
     });
   }
   return teamMembers;
+}
+
+function resolveShopSlug(slug: string | null | undefined, name: string) {
+  return slug?.trim() || toShopSlug(name);
 }
 
 interface ProductRow {
@@ -168,8 +174,9 @@ function mapShop(row: ShopRow): Shop {
 
   return {
     id: row.id,
-    slug: toShopSlug(row.name),
+    slug: resolveShopSlug(row.slug, row.name),
     name: row.name,
+    postalCode: row.postal_code ?? undefined,
     category: row.category?.trim() || "Non catégorisé",
     image: row.logo_image_url ?? FALLBACK_IMAGE,
     bannerImage: row.banner_image_url ?? row.logo_image_url ?? FALLBACK_IMAGE,
@@ -194,12 +201,13 @@ function mapShop(row: ShopRow): Shop {
   };
 }
 
-function mapProduct(row: ProductRow, shopName: string): Product {
+function mapProduct(row: ProductRow, shopName: string, shopSlug?: string | null): Product {
   return {
     id: row.id,
     shopId: row.shop_id,
     collectionId: row.collection_id ?? undefined,
     shopName,
+    shopSlug: resolveShopSlug(shopSlug, shopName),
     title: row.title,
     price: Number(row.price),
     image: row.image_url ?? row.main_image_url ?? FALLBACK_IMAGE,
@@ -220,30 +228,42 @@ function mapProduct(row: ProductRow, shopName: string): Product {
   };
 }
 
+async function fetchPublishedShopLookups(): Promise<Array<Pick<ShopRow, "id" | "name" | "slug">>> {
+  try {
+    return await requestSupabase<Array<Pick<ShopRow, "id" | "name" | "slug">>>(
+      "shops?select=id,name,slug&is_published=eq.true"
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!isSchemaColumnError(message, ["slug"])) {
+      throw error;
+    }
+    const fallbackRows = await requestSupabase<Array<Pick<ShopRow, "id" | "name">>>(
+      "shops?select=id,name&is_published=eq.true"
+    );
+    return fallbackRows.map((row) => ({ ...row, slug: undefined }));
+  }
+}
+
 export async function fetchShops(): Promise<Shop[]> {
   if (!hasSupabaseConfig()) {
     throw new Error("Configuration Supabase manquante.");
   }
+  let rows: ShopRow[];
   try {
-    let rows: ShopRow[];
-    try {
-      rows = await requestSupabase<ShopRow[]>(
-        "shops?select=id,name,category,description,story,team_members,address,city,phone,is_open,pickup_today,open_sunday,delivery,hours,opening_hours,rating,review_count,lat,lng,is_published,logo_image_url,banner_image_url&is_published=eq.true&order=created_at.desc"
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (!isSchemaColumnError(message, ["story", "team_members", "opening_hours", "logo_image_url", "banner_image_url"])) {
-        throw error;
-      }
-      rows = await requestSupabase<ShopRow[]>(
-        "shops?select=id,name,category,description,address,city,phone,is_open,pickup_today,open_sunday,delivery,hours,rating,review_count,lat,lng,is_published&is_published=eq.true&order=created_at.desc"
-      );
-    }
-    return rows.map(mapShop);
+    rows = await requestSupabase<ShopRow[]>(
+      "shops?select=id,slug,name,category,description,story,team_members,address,city,postal_code,phone,is_open,pickup_today,open_sunday,delivery,hours,opening_hours,rating,review_count,lat,lng,is_published,logo_image_url,banner_image_url&is_published=eq.true&order=created_at.desc"
+    );
   } catch (error) {
-    console.error("fetchShops failed", error);
-    throw error;
+    const message = error instanceof Error ? error.message : "";
+    if (!isSchemaColumnError(message, ["slug", "story", "team_members", "opening_hours", "logo_image_url", "banner_image_url"])) {
+      throw error;
+    }
+    rows = await requestSupabase<ShopRow[]>(
+      "shops?select=id,name,category,description,address,city,postal_code,phone,is_open,pickup_today,open_sunday,delivery,hours,rating,review_count,lat,lng,is_published&is_published=eq.true&order=created_at.desc"
+    );
   }
+  return rows.map(mapShop);
 }
 
 export async function fetchShopById(shopId: string): Promise<Shop | null> {
@@ -254,15 +274,15 @@ export async function fetchShopById(shopId: string): Promise<Shop | null> {
     let rows: ShopRow[];
     try {
       rows = await requestSupabase<ShopRow[]>(
-        `shops?select=id,name,category,description,story,team_members,address,city,phone,is_open,pickup_today,open_sunday,delivery,hours,opening_hours,rating,review_count,lat,lng,is_published,logo_image_url,banner_image_url&id=eq.${shopId}&is_published=eq.true&limit=1`
+        `shops?select=id,slug,name,category,description,story,team_members,address,city,postal_code,phone,is_open,pickup_today,open_sunday,delivery,hours,opening_hours,rating,review_count,lat,lng,is_published,logo_image_url,banner_image_url&id=eq.${shopId}&is_published=eq.true&limit=1`
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (!isSchemaColumnError(message, ["story", "team_members", "opening_hours", "logo_image_url", "banner_image_url"])) {
+      if (!isSchemaColumnError(message, ["slug", "story", "team_members", "opening_hours", "logo_image_url", "banner_image_url"])) {
         throw error;
       }
       rows = await requestSupabase<ShopRow[]>(
-        `shops?select=id,name,category,description,address,city,phone,is_open,pickup_today,open_sunday,delivery,hours,rating,review_count,lat,lng,is_published&id=eq.${shopId}&is_published=eq.true&limit=1`
+        `shops?select=id,name,category,description,address,city,postal_code,phone,is_open,pickup_today,open_sunday,delivery,hours,rating,review_count,lat,lng,is_published&id=eq.${shopId}&is_published=eq.true&limit=1`
       );
     }
     return rows[0] ? mapShop(rows[0]) : null;
@@ -294,42 +314,40 @@ export async function fetchProducts(options?: { limit?: number; lightweight?: bo
   if (!hasSupabaseConfig()) {
     throw new Error("Configuration Supabase manquante.");
   }
-  try {
-    const shopRowsPromise = requestSupabase<Pick<ShopRow, "id" | "name">[]>("shops?select=id,name&is_published=eq.true");
-    const productRowsPromise = requestSupabase<ProductRow[]>(buildProductsQuery(options));
+  const shopRowsPromise = fetchPublishedShopLookups();
+  const productRowsPromise = requestSupabase<ProductRow[]>(buildProductsQuery(options));
 
-    let productRows: ProductRow[];
-    let shopRows: Pick<ShopRow, "id" | "name">[];
-    try {
-      [productRows, shopRows] = await Promise.all([productRowsPromise, shopRowsPromise]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (isStatementTimeoutError(message)) {
-        [productRows, shopRows] = await Promise.all([
-          requestSupabase<ProductRow[]>(
-            buildProductsQuery({ limit: options?.limit ?? 60, lightweight: true })
-          ),
-          shopRowsPromise,
-        ]);
-      } else if (!isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors", "main_image_url", "image_urls", "categories"])) {
-        throw error;
-      } else {
-        [productRows, shopRows] = await Promise.all([
-          requestSupabase<ProductRow[]>(
-            buildProductsQuery({ limit: options?.limit, lightweight: true })
-          ),
-          shopRowsPromise,
-        ]);
-      }
-    }
-    const shopNameById = new Map(shopRows.map((shop) => [shop.id, shop.name]));
-    return productRows
-      .filter((row) => shopNameById.has(row.shop_id))
-      .map((row) => mapProduct(row, shopNameById.get(row.shop_id) ?? "Boutique"));
+  let productRows: ProductRow[];
+  let shopRows: Array<Pick<ShopRow, "id" | "name" | "slug">>;
+  try {
+    [productRows, shopRows] = await Promise.all([productRowsPromise, shopRowsPromise]);
   } catch (error) {
-    console.error("fetchProducts failed", error);
-    throw error;
+    const message = error instanceof Error ? error.message : "";
+    if (isStatementTimeoutError(message)) {
+      [productRows, shopRows] = await Promise.all([
+        requestSupabase<ProductRow[]>(
+          buildProductsQuery({ limit: options?.limit ?? 60, lightweight: true })
+        ),
+        shopRowsPromise,
+      ]);
+    } else if (!isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors", "main_image_url", "image_urls", "categories"])) {
+      throw error;
+    } else {
+      [productRows, shopRows] = await Promise.all([
+        requestSupabase<ProductRow[]>(
+          buildProductsQuery({ limit: options?.limit, lightweight: true })
+        ),
+        shopRowsPromise,
+      ]);
+    }
   }
+  const shopById = new Map(shopRows.map((shop) => [shop.id, shop]));
+  return productRows
+    .filter((row) => shopById.has(row.shop_id))
+    .map((row) => {
+      const shop = shopById.get(row.shop_id);
+      return mapProduct(row, shop?.name ?? "Boutique", shop?.slug);
+    });
 }
 
 export async function fetchProductsByShopId(shopId: string): Promise<Product[]> {
@@ -367,7 +385,7 @@ export async function fetchProductsByShopId(shopId: string): Promise<Product[]> 
       );
     }
 
-    return productRows.map((row) => mapProduct(row, shop.name));
+    return productRows.map((row) => mapProduct(row, shop.name, shop.slug));
   } catch (error) {
     console.error("fetchProductsByShopId failed", error);
     throw error;
@@ -411,7 +429,7 @@ export async function fetchProductById(productId: string): Promise<Product | nul
 
     const shop = await fetchShopById(row.shop_id);
     if (!shop) return null;
-    return mapProduct(row, shop.name);
+    return mapProduct(row, shop.name, shop.slug);
   } catch (error) {
     console.error("fetchProductById failed", error);
     throw error;

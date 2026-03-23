@@ -8,6 +8,7 @@ export interface Shop {
   id: string;
   slug?: string;
   name: string;
+  postalCode?: string;
   category: string;
   image: string;
   bannerImage?: string;
@@ -36,6 +37,7 @@ export interface Product {
   shopId: string;
   collectionId?: string;
   shopName: string;
+  shopSlug?: string;
   title: string;
   price: number;
   image: string;

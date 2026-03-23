@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   X,
   MapPin,
@@ -17,12 +17,15 @@ import { useAuth } from "../AuthContext";
 import {
   createSellerProduct,
   createSellerShopCollection,
+  fetchSellerProducts,
   fetchSellerShopCollections,
   type SellerShopCollection,
+  updateSellerProduct,
 } from "../../services/sellerProducts";
 
 export function AddProductScreenNext() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const push = (path: string) => router.push(path);
   const { user, isAuthenticated, accessToken } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -50,8 +53,15 @@ export function AddProductScreenNext() {
   const [newCollectionImageUrl, setNewCollectionImageUrl] = useState("");
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [loadedProductKey, setLoadedProductKey] = useState<string | null>(null);
 
   const maxPhotos = 5;
+  const editProductId = searchParams.get("edit")?.trim() || "";
+  const duplicateProductId = searchParams.get("duplicate")?.trim() || "";
+  const sourceProductId = editProductId || duplicateProductId;
+  const isEditMode = Boolean(editProductId);
+  const isDuplicateMode = Boolean(!editProductId && duplicateProductId);
+  const sourceProductKey = sourceProductId ? `${isEditMode ? "edit" : "duplicate"}:${sourceProductId}` : "";
 
   const handlePhotoFiles = (fileList: FileList | null) => {
     if (!fileList) return;
@@ -176,6 +186,71 @@ export function AddProductScreenNext() {
     };
   }, [user?.id, user?.siretVerified, accessToken]);
 
+  useEffect(() => {
+    if (!user?.id || !accessToken || !sourceProductId) {
+      setLoadedProductKey(null);
+      return;
+    }
+    if (loadedProductKey === sourceProductKey) {
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const sellerProducts = await fetchSellerProducts({
+          userId: user.id,
+          accessToken,
+        });
+        const sourceProduct = sellerProducts.find((product) => product.id === sourceProductId);
+        if (!sourceProduct) {
+          if (!cancelled) {
+            setValidationErrors(["Produit introuvable pour cette action."]);
+          }
+          return;
+        }
+        if (cancelled) return;
+
+        setTitle(isDuplicateMode ? `${sourceProduct.title} (copie)` : sourceProduct.title);
+        setDescription(sourceProduct.description ?? "");
+        setFeatures(sourceProduct.features ?? "");
+        setComposition(sourceProduct.composition ?? "");
+        setReturnConditions(sourceProduct.returnConditions ?? "");
+        setColor(sourceProduct.color ?? "");
+        setPrice(String(sourceProduct.price));
+        setStock(String(sourceProduct.stock));
+        setCategories(
+          sourceProduct.categories && sourceProduct.categories.length > 0
+            ? sourceProduct.categories
+            : sourceProduct.category
+              ? [sourceProduct.category]
+              : []
+        );
+        setSelectedCollectionId(sourceProduct.collectionId ?? "");
+        setPickup(Boolean(sourceProduct.pickup));
+        setDelivery(Boolean(sourceProduct.delivery));
+        setPhotos(
+          sourceProduct.imageUrls && sourceProduct.imageUrls.length > 0
+            ? sourceProduct.imageUrls
+            : sourceProduct.image
+              ? [sourceProduct.image]
+              : []
+        );
+        setMainPhotoIndex(0);
+        setValidationErrors([]);
+        setLoadedProductKey(sourceProductKey);
+      } catch (error) {
+        if (!cancelled) {
+          setValidationErrors([error instanceof Error ? error.message : "Impossible de charger le produit."]);
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, accessToken, sourceProductId, sourceProductKey, isDuplicateMode, loadedProductKey]);
+
   if (!isAuthenticated || user?.role !== "seller" || !user?.siretVerified) {
     return null;
   }
@@ -265,9 +340,7 @@ export function AddProductScreenNext() {
           });
           setSelectedCollectionId(createdCollection.id);
         }
-        await createSellerProduct({
-          userId: user.id,
-          accessToken,
+        const payload = {
           title: title.trim() || "Produit brouillon",
           description: description.trim(),
           features: features.trim(),
@@ -283,15 +356,31 @@ export function AddProductScreenNext() {
           isPublished: target === "published",
           mainImageUrl,
           imageUrls: photos,
-        });
+        };
+        if (isEditMode && editProductId) {
+          await updateSellerProduct({
+            productId: editProductId,
+            accessToken,
+            ...payload,
+          });
+        } else {
+          await createSellerProduct({
+            userId: user.id,
+            accessToken,
+            ...payload,
+          });
+        }
         setSaveResult(target);
       } catch (error) {
         const rawMessage = error instanceof Error ? error.message : "Impossible de publier le produit.";
+        const isProductsSchemaError =
+          (rawMessage.includes("schema cache") || rawMessage.includes("column")) &&
+          rawMessage.toLowerCase().includes("products");
         const message = rawMessage.includes("products_main_image_required_if_published")
           ? "Choisissez une image principale valide."
-          : rawMessage.includes("schema cache") || rawMessage.includes("column")
+          : isProductsSchemaError
             ? "Base de données pas à jour. Lancez les migrations Supabase puis réessayez."
-            : rawMessage.includes("index row requires")
+          : rawMessage.includes("index row requires")
               ? "Image trop lourde pour le format actuel. Réduisez la taille ou le poids de la photo."
               : rawMessage.includes("payload too large")
                 ? "Images trop lourdes. Réduisez la taille des photos puis réessayez."
@@ -306,9 +395,22 @@ export function AddProductScreenNext() {
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      <Header title="Ajouter un produit" onBack={() => router.back()} />
+      <Header
+        title={isEditMode ? "Modifier le produit" : isDuplicateMode ? "Copier le produit" : "Ajouter un produit"}
+        onBack={() => router.back()}
+      />
 
       <div className="flex-1 px-4 lg:px-0 py-6 max-w-xl mx-auto w-full">
+        {isEditMode && (
+          <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+            Modification du produit en cours.
+          </div>
+        )}
+        {isDuplicateMode && (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Duplication du produit en cours. Le titre contient déjà "copie".
+          </div>
+        )}
         {/* Photos */}
         <div className="mb-6">
           <label className="text-sm mb-2 block">

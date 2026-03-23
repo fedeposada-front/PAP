@@ -1,10 +1,19 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, MapPin, MessageCircle, ShoppingBag, User } from "lucide-react";
+import { Newspaper, MapPin, MessageCircle, ShoppingBag, User } from "lucide-react";
 import { useAuth } from "./AuthContext";
 
-const HIDDEN_ROUTES = new Set(["/", "/onboarding", "/auth", "/reset-password"]);
+const HIDDEN_ROUTES = new Set([
+  "/",
+  "/onboarding",
+  "/auth",
+  "/reset-password",
+  "/about",
+  "/how-it-works",
+  "/legal",
+  "/privacy",
+]);
 
 export function AppBottomNav() {
   const pathname = usePathname();
@@ -32,7 +41,7 @@ export function AppBottomNav() {
 
   const pushProfile = () => {
     if (!isAuthenticated) {
-      router.push("/auth");
+      router.push("/auth?next=/profile");
       return;
     }
     if (user?.role === "seller") {
@@ -44,7 +53,7 @@ export function AppBottomNav() {
 
   const tabs = [
     { id: "home", label: "Explorer", icon: MapPin, onClick: () => router.push("/home") },
-    { id: "news", label: "Feed", icon: Bell, onClick: () => router.push("/news") },
+    { id: "news", label: "Feed", icon: Newspaper, onClick: () => router.push("/news") },
     { id: "cart", label: "Panier", icon: ShoppingBag, onClick: () => router.push("/cart") },
     { id: "messages", label: "Messages", icon: MessageCircle, onClick: () => router.push("/messages") },
     { id: "profile", label: "Profil", icon: User, onClick: pushProfile },

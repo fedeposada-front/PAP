@@ -29,6 +29,7 @@ export interface User {
   firstName: string;
   lastName: string;
   email: string;
+  avatarUrl?: string;
   role: Role;
   roles: Role[];
   shopName?: string;
@@ -219,7 +220,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const authUser = await requestJson<{
       id: string;
       email: string;
-      user_metadata?: { first_name?: string; last_name?: string };
+      user_metadata?: {
+        first_name?: string;
+        last_name?: string;
+        avatar_url?: string;
+        picture?: string;
+      };
     }>(`${SUPABASE_URL}/auth/v1/user`, {
       method: "GET",
     }, { requiresAuth: true, accessToken });
@@ -279,6 +285,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: authUser.email,
       firstName: profilePayload.first_name ?? "",
       lastName: profilePayload.last_name ?? "",
+      avatarUrl: authUser.user_metadata?.avatar_url ?? authUser.user_metadata?.picture ?? undefined,
       roles,
       role,
       shopName: profilePayload.shop_name ?? undefined,
