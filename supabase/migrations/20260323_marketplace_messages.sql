@@ -5,6 +5,7 @@
 create table if not exists public.conversations (
   id uuid primary key default gen_random_uuid(),
   buyer_user_id uuid not null references auth.users(id) on delete cascade,
+  buyer_display_name text not null default 'Client',
   shop_id uuid not null references public.shops(id) on delete cascade,
   last_message_at timestamptz not null default now(),
   last_message_preview text,
@@ -20,6 +21,27 @@ create table if not exists public.messages (
   created_at timestamptz not null default now(),
   read_at timestamptz
 );
+
+alter table public.conversations add column if not exists buyer_display_name text;
+
+update public.conversations c
+set buyer_display_name = coalesce(
+  nullif(btrim(coalesce(p.first_name, '') || ' ' || coalesce(p.last_name, '')), ''),
+  'Client'
+)
+from public.profiles p
+where p.id = c.buyer_user_id
+  and (c.buyer_display_name is null or btrim(c.buyer_display_name) = '');
+
+update public.conversations
+set buyer_display_name = 'Client'
+where buyer_display_name is null or btrim(buyer_display_name) = '';
+
+alter table public.conversations
+  alter column buyer_display_name set default 'Client';
+
+alter table public.conversations
+  alter column buyer_display_name set not null;
 
 do $$
 begin

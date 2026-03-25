@@ -23,6 +23,7 @@ import { trackLeadEvent } from "../../services/leadEvents";
 import { fetchProductById, fetchShopById } from "../../services/catalog";
 import { fetchSellerProducts } from "../../services/sellerProducts";
 import { fetchShopSettings } from "../../services/shopSettings";
+import { favoriteProduct, fetchIsFavoriteProduct, unfavoriteProduct } from "../../services/favoriteProducts";
 import type { Product, Shop } from "../../types/catalog";
 import { getProductHref, getShopHref } from "../../utils/shopRouting";
 
@@ -46,12 +47,15 @@ export function ProductScreenNext() {
   const [cartNotice, setCartNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [cartPulse, setCartPulse] = useState(false);
   const [liked, setLiked] = useState(false);
+  const [isFavoritePending, setIsFavoritePending] = useState(false);
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const isPreviewMode = searchParams.get("preview") === "1";
   const addedTimerRef = useRef<number | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const pulseTimerRef = useRef<number | null>(null);
+  const shareTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,8 +138,45 @@ export function ProductScreenNext() {
       if (addedTimerRef.current) window.clearTimeout(addedTimerRef.current);
       if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
       if (pulseTimerRef.current) window.clearTimeout(pulseTimerRef.current);
+      if (shareTimerRef.current) window.clearTimeout(shareTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!shareFeedback) return undefined;
+    if (shareTimerRef.current) window.clearTimeout(shareTimerRef.current);
+    shareTimerRef.current = window.setTimeout(() => setShareFeedback(null), 2200);
+    return () => {
+      if (shareTimerRef.current) window.clearTimeout(shareTimerRef.current);
+    };
+  }, [shareFeedback]);
+
+  useEffect(() => {
+    if (!product?.id || !user?.id || !accessToken || isPreviewMode) {
+      setLiked(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const nextLiked = await fetchIsFavoriteProduct({
+          userId: user.id,
+          productId: product.id,
+          accessToken,
+        });
+        if (!cancelled) setLiked(nextLiked);
+      } catch {
+        if (!cancelled) setLiked(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [product?.id, user?.id, accessToken, isPreviewMode]);
 
   useEffect(() => {
     if (isPreviewMode || !product) return;
@@ -238,6 +279,134 @@ export function ProductScreenNext() {
     }
   };
 
+  const handleShare = () => {
+    const run = async () => {
+      if (typeof window === "undefined") return;
+
+      const copyTextLegacy = (value: string) => {
+        if (typeof document === "undefined") return false;
+        const textarea = document.createElement("textarea");
+        textarea.value = value;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.top = "0";
+        textarea.style.left = "0";
+        textarea.style.opacity = "0";
+        textarea.style.pointerEvents = "none";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        textarea.setSelectionRange(0, textarea.value.length);
+        const copied = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        return copied;
+      };
+
+      const sharePath = getProductHref({
+        id: product.id,
+        shopSlug: shop?.slug ?? product.shopSlug,
+        shopName: shop?.name ?? product.shopName,
+      });
+      const shareUrl = `${window.location.origin}${sharePath}`;
+      const shareData = {
+        title: product.title,
+        text: `Découvre ${product.title} chez ${shop?.name ?? product.shopName} sur MonCadeauLocal.`,
+        url: shareUrl,
+      };
+
+      try {
+        if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+          await navigator.share(shareData);
+          setShareFeedback("Lien partagé");
+          return;
+        }
+
+        if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(shareUrl);
+          setShareFeedback("Lien copié");
+          return;
+        }
+
+        if (copyTextLegacy(shareUrl)) {
+          setShareFeedback("Lien copié");
+          return;
+        }
+
+        window.prompt("Copie ce lien :", shareUrl);
+        setShareFeedback("Lien affiché");
+      } catch (error) {
+        const errorName = error instanceof Error ? error.name : "";
+        const errorMessage = error instanceof Error ? error.message : "";
+        const isUserCancelled =
+          /abort|cancel/i.test(errorName) ||
+          /abort|cancel/i.test(errorMessage);
+        if (isUserCancelled) return;
+
+        if (copyTextLegacy(shareUrl)) {
+          setShareFeedback("Lien copié");
+          return;
+        }
+
+        window.prompt("Copie ce lien :", shareUrl);
+        setShareFeedback("Lien affiché");
+      }
+    };
+
+    void run();
+  };
+
+  const handleToggleFavorite = () => {
+    const currentPath =
+      typeof window !== "undefined"
+        ? `${window.location.pathname}${window.location.search}`
+        : getProductHref({
+            id: product.id,
+            shopSlug: shop?.slug ?? product.shopSlug,
+            shopName: shop?.name ?? product.shopName,
+          });
+
+    if (!user?.id || !accessToken) {
+      push(`/auth?next=${encodeURIComponent(currentPath)}`);
+      return;
+    }
+
+    if (isFavoritePending) return;
+
+    const nextLiked = !liked;
+    setLiked(nextLiked);
+    setIsFavoritePending(true);
+
+    const run = async () => {
+      try {
+        if (nextLiked) {
+          await favoriteProduct({
+            userId: user.id,
+            productId: product.id,
+            accessToken,
+          });
+          showCartNotice("success", "Produit ajouté aux favoris.");
+        } else {
+          await unfavoriteProduct({
+            userId: user.id,
+            productId: product.id,
+            accessToken,
+          });
+          showCartNotice("success", "Produit retiré des favoris.");
+        }
+      } catch (error) {
+        setLiked(!nextLiked);
+        showCartNotice(
+          "error",
+          error instanceof Error ? error.message : "Impossible de mettre à jour les favoris."
+        );
+      } finally {
+        setIsFavoritePending(false);
+      }
+    };
+
+    void run();
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[#dfe8ef] pb-16 text-slate-900">
       {isPreviewMode && product && !product.isPublished && (
@@ -282,13 +451,16 @@ export function ProductScreenNext() {
             <MessageCircle className="w-5 h-5" />
           </button>
           <button
-            onClick={() => setLiked(!liked)}
-            className={`w-10 h-10 flex items-center justify-center rounded-full transition-colors ${liked ? "bg-coral-light" : "bg-muted hover:bg-muted/80"}`}
+            onClick={handleToggleFavorite}
+            disabled={isFavoritePending}
+            aria-pressed={liked}
+            className={`w-10 h-10 flex items-center justify-center rounded-full transition-colors ${liked ? "bg-coral-light" : "bg-muted hover:bg-muted/80"} ${isFavoritePending ? "opacity-60" : ""}`}
             aria-label="Favori"
           >
             <Heart className={`w-4 h-4 ${liked ? "text-coral fill-coral" : ""}`} />
           </button>
           <button
+            onClick={handleShare}
             className="w-10 h-10 flex items-center justify-center rounded-full bg-muted hover:bg-muted/80 transition-colors"
             aria-label="Partager"
           >
@@ -304,12 +476,17 @@ export function ProductScreenNext() {
           right={
             <div className="flex gap-2">
               <button
-                onClick={() => setLiked(!liked)}
-                className={`w-9 h-9 flex items-center justify-center rounded-full ${liked ? "bg-coral-light" : "bg-white border border-border"}`}
+                onClick={handleToggleFavorite}
+                disabled={isFavoritePending}
+                aria-pressed={liked}
+                className={`w-9 h-9 flex items-center justify-center rounded-full ${liked ? "bg-coral-light" : "bg-white border border-border"} ${isFavoritePending ? "opacity-60" : ""}`}
               >
                 <Heart className={`w-4 h-4 ${liked ? "text-coral fill-coral" : ""}`} />
               </button>
-              <button className="w-9 h-9 flex items-center justify-center rounded-full bg-white border border-border">
+              <button
+                onClick={handleShare}
+                className="w-9 h-9 flex items-center justify-center rounded-full bg-white border border-border"
+              >
                 <Share2 className="w-4 h-4" />
               </button>
             </div>
@@ -379,6 +556,12 @@ export function ProductScreenNext() {
               }`}
             >
               {cartNotice.message}
+            </div>
+          )}
+
+          {!cartNotice && shareFeedback && (
+            <div className="mt-4 rounded-2xl border border-coral/20 bg-coral/5 px-4 py-3 text-sm text-coral">
+              {shareFeedback}
             </div>
           )}
 
@@ -461,6 +644,15 @@ export function ProductScreenNext() {
               icon={<MessageCircle className="w-5 h-5" />}
               className="h-16 rounded-[1.7rem] border-white/70 bg-white text-[1.1rem] shadow-[0_10px_24px_rgba(15,23,42,0.06)]"
               onClick={() => {
+                const currentPath =
+                  typeof window !== "undefined"
+                    ? `${window.location.pathname}${window.location.search}`
+                    : getProductHref({
+                        id: product.id,
+                        shopSlug: product.shopSlug,
+                        shopName: product.shopName,
+                      });
+                const messageUrl = `/messages?shop=${encodeURIComponent(product.shopId)}&from=${encodeURIComponent(currentPath)}`;
                 trackLeadEvent({
                   type: "click_message",
                   actorUserId: user?.id,
@@ -469,10 +661,10 @@ export function ProductScreenNext() {
                   metadata: { source: "product_screen" },
                 });
                 if (!user?.id || !accessToken) {
-                  push(`/auth?next=${encodeURIComponent(`/messages?shop=${product.shopId}`)}`);
+                  push(`/auth?next=${encodeURIComponent(messageUrl)}`);
                   return;
                 }
-                push(`/messages?shop=${product.shopId}`);
+                push(messageUrl);
               }}
             >
               Envoyer un message

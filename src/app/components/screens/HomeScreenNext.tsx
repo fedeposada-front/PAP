@@ -40,6 +40,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import {
@@ -203,6 +204,12 @@ export function HomeScreenNext() {
   const searchScopeLabel = searchScope === "product" ? "Produit" : "Boutique";
   const searchPlaceholder =
     searchScope === "product" ? "Rechercher un produit..." : "Rechercher une boutique...";
+  const publicInfoLinks = [
+    { label: "Comment ça marche", href: "/how-it-works" },
+    { label: "À propos", href: "/about" },
+    { label: "Mentions légales", href: "/legal" },
+    { label: "Confidentialité", href: "/privacy" },
+  ] as const;
 
   const toKmDistance = (fromLat: number, fromLng: number, toLat: number, toLng: number) => {
     const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -696,17 +703,13 @@ export function HomeScreenNext() {
       title: "Découvrir",
       items: [
         { label: "Explorer", href: "/home" },
-        { label: "Comment ça marche", href: "/how-it-works" },
+        publicInfoLinks[0],
         { label: "Actualités", href: "/news" },
       ],
     },
     {
       title: "Informations",
-      items: [
-        { label: "À propos", href: "/about" },
-        { label: "Mentions légales", href: "/legal" },
-        { label: "Confidentialité", href: "/privacy" },
-      ],
+      items: publicInfoLinks.slice(1),
     },
   ] as const;
 
@@ -738,6 +741,42 @@ export function HomeScreenNext() {
     setIsVisitorMenuOpen(false);
     handleLogout();
   };
+
+  const renderAccountMenuItems = () => (
+    <>
+      {isAuthenticated ? (
+        <>
+          <DropdownMenuItem onSelect={handleProfileClick} className="cursor-pointer rounded-lg px-3 py-2 text-sm">
+            Mon profil
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={handleLogout}
+            disabled={isLoggingOut}
+            className="cursor-pointer rounded-lg px-3 py-2 text-sm"
+          >
+            {isLoggingOut ? "Déconnexion..." : "Déconnexion"}
+          </DropdownMenuItem>
+        </>
+      ) : (
+        <DropdownMenuItem
+          onSelect={() => navigate("/auth")}
+          className="cursor-pointer rounded-lg px-3 py-2 text-sm"
+        >
+          Connexion / Inscription
+        </DropdownMenuItem>
+      )}
+      <DropdownMenuSeparator />
+      {publicInfoLinks.map((item) => (
+        <DropdownMenuItem
+          key={item.href}
+          onSelect={() => navigate(item.href)}
+          className="cursor-pointer rounded-lg px-3 py-2 text-sm"
+        >
+          {item.label}
+        </DropdownMenuItem>
+      ))}
+    </>
+  );
 
   const renderSearchBar = (mobile = false) => (
     <div
@@ -849,42 +888,40 @@ export function HomeScreenNext() {
               </span>
             </span>
           </Button>
-          <Button
-            size="sm"
-            onClick={handleProfileClick}
-            className={isAuthenticated ? "h-9 w-9 overflow-hidden rounded-full p-0" : ""}
-          >
-            {isAuthenticated ? (
-              profileAvatarSrc ? (
-                <img
-                  src={profileAvatarSrc}
-                  alt="Mon profil"
-                  className="h-full w-full object-cover"
-                />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              {isAuthenticated ? (
+                <button
+                  type="button"
+                  className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-white pl-1.5 pr-3 text-foreground transition-colors hover:bg-muted"
+                  aria-label="Ouvrir le menu du compte"
+                >
+                  <span className="inline-flex h-7 w-7 overflow-hidden rounded-full">
+                    {profileAvatarSrc ? (
+                      <img
+                        src={profileAvatarSrc}
+                        alt="Mon profil"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <span className="inline-flex h-full w-full items-center justify-center bg-coral-light text-coral text-xs font-semibold">
+                        {profileInitials}
+                      </span>
+                    )}
+                  </span>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                </button>
               ) : (
-                <span className="inline-flex h-full w-full items-center justify-center bg-coral-light text-coral text-xs font-semibold">
-                  {profileInitials}
-                </span>
-              )
-            ) : (
-              "Connexion"
-            )}
-          </Button>
-          {isAuthenticated && (
-            <button
-              onClick={handleLogout}
-              disabled={isLoggingOut}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-white text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-              title="Se déconnecter"
-              aria-label="Se déconnecter"
-            >
-              {isLoggingOut ? (
-                <LoaderCircle className="w-4 h-4 animate-spin" />
-              ) : (
-                <LogOut className="w-4 h-4" />
+                <Button size="sm" variant="outline" className="inline-flex items-center gap-2">
+                  Connexion
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
               )}
-            </button>
-          )}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[220px] rounded-xl border-border p-1.5">
+              {renderAccountMenuItems()}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
 
@@ -1361,6 +1398,24 @@ export function HomeScreenNext() {
           )}
         </div>
       </div>
+
+      <footer className="hidden border-t border-border bg-white lg:block">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-8 py-5 text-sm text-muted-foreground">
+          <p>MonCadeauLocal</p>
+          <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2">
+            {publicInfoLinks.map((item) => (
+              <button
+                key={item.href}
+                type="button"
+                onClick={() => navigate(item.href)}
+                className="transition-colors hover:text-foreground"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </footer>
       {/* Category picker bottom sheet (mobile) */}
       <BottomSheet
         isOpen={showCategories}

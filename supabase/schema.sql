@@ -1079,6 +1079,7 @@ for each row execute function public.set_updated_at();
 create table if not exists public.conversations (
   id uuid primary key default gen_random_uuid(),
   buyer_user_id uuid not null references auth.users(id) on delete cascade,
+  buyer_display_name text not null default 'Client',
   shop_id uuid not null references public.shops(id) on delete cascade,
   last_message_at timestamptz not null default now(),
   last_message_preview text,
@@ -1094,6 +1095,46 @@ create table if not exists public.messages (
   created_at timestamptz not null default now(),
   read_at timestamptz
 );
+
+create table if not exists public.message_email_notifications (
+  id uuid primary key default gen_random_uuid(),
+  message_id uuid not null references public.messages(id) on delete cascade,
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  sender_user_id uuid not null references auth.users(id) on delete cascade,
+  recipient_user_id uuid not null references auth.users(id) on delete cascade,
+  channel text not null default 'email',
+  template_key text not null default 'message_reply',
+  status text not null default 'pending',
+  attempt_count integer not null default 0,
+  scheduled_at timestamptz not null default now(),
+  processed_at timestamptz,
+  provider text,
+  provider_message_id text,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.conversations add column if not exists buyer_display_name text;
+
+update public.conversations c
+set buyer_display_name = coalesce(
+  nullif(btrim(coalesce(p.first_name, '') || ' ' || coalesce(p.last_name, '')), ''),
+  'Client'
+)
+from public.profiles p
+where p.id = c.buyer_user_id
+  and (c.buyer_display_name is null or btrim(c.buyer_display_name) = '');
+
+update public.conversations
+set buyer_display_name = 'Client'
+where buyer_display_name is null or btrim(buyer_display_name) = '';
+
+alter table public.conversations
+  alter column buyer_display_name set default 'Client';
+
+alter table public.conversations
+  alter column buyer_display_name set not null;
 
 do $$
 begin
@@ -1123,6 +1164,38 @@ begin
 end
 $$;
 
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'message_email_notifications_message_unique'
+      and conrelid = 'public.message_email_notifications'::regclass
+  ) then
+    alter table public.message_email_notifications
+      add constraint message_email_notifications_message_unique
+      unique (message_id);
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'message_email_notifications_status_allowed'
+      and conrelid = 'public.message_email_notifications'::regclass
+  ) then
+    alter table public.message_email_notifications
+      add constraint message_email_notifications_status_allowed
+      check (
+        status = any (
+          array['pending','processing','sent','failed','provider_missing']::text[]
+        )
+      );
+  end if;
+end
+$$;
+
 create index if not exists idx_conversations_buyer_last_message_at
   on public.conversations(buyer_user_id, last_message_at desc);
 
@@ -1134,6 +1207,12 @@ create index if not exists idx_messages_conversation_created_at
 
 create index if not exists idx_messages_sender_created_at
   on public.messages(sender_user_id, created_at desc);
+
+create index if not exists idx_message_email_notifications_status_scheduled_at
+  on public.message_email_notifications(status, scheduled_at, created_at);
+
+create index if not exists idx_message_email_notifications_recipient_status
+  on public.message_email_notifications(recipient_user_id, status, created_at desc);
 
 create or replace function public.sync_conversation_last_message()
 returns trigger
@@ -1153,6 +1232,47 @@ begin
 end
 $$;
 
+create or replace function public.enqueue_message_email_notification()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  next_recipient_user_id uuid;
+begin
+  select
+    case
+      when c.buyer_user_id = new.sender_user_id then s.owner_user_id
+      else c.buyer_user_id
+    end
+  into next_recipient_user_id
+  from public.conversations c
+  join public.shops s on s.id = c.shop_id
+  where c.id = new.conversation_id;
+
+  if next_recipient_user_id is null or next_recipient_user_id = new.sender_user_id then
+    return new;
+  end if;
+
+  insert into public.message_email_notifications (
+    message_id,
+    conversation_id,
+    sender_user_id,
+    recipient_user_id
+  )
+  values (
+    new.id,
+    new.conversation_id,
+    new.sender_user_id,
+    next_recipient_user_id
+  )
+  on conflict (message_id) do nothing;
+
+  return new;
+end
+$$;
+
 drop trigger if exists trg_conversations_updated_at on public.conversations;
 create trigger trg_conversations_updated_at
 before update on public.conversations
@@ -1162,6 +1282,16 @@ drop trigger if exists trg_messages_sync_conversation on public.messages;
 create trigger trg_messages_sync_conversation
 after insert on public.messages
 for each row execute function public.sync_conversation_last_message();
+
+drop trigger if exists trg_message_email_notifications_updated_at on public.message_email_notifications;
+create trigger trg_message_email_notifications_updated_at
+before update on public.message_email_notifications
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_messages_enqueue_email_notification on public.messages;
+create trigger trg_messages_enqueue_email_notification
+after insert on public.messages
+for each row execute function public.enqueue_message_email_notification();
 
 alter table public.profiles enable row level security;
 alter table public.category_groups enable row level security;
@@ -1185,8 +1315,14 @@ alter table public.pickup_reservations enable row level security;
 alter table public.payouts enable row level security;
 alter table public.conversations enable row level security;
 alter table public.messages enable row level security;
+alter table public.message_email_notifications enable row level security;
 
 grant usage on schema public to anon, authenticated, service_role;
+
+grant select on public.shops to service_role;
+grant select on public.conversations to service_role;
+grant select on public.messages to service_role;
+grant select, update on public.message_email_notifications to service_role;
 
 grant select on public.category_groups to anon;
 grant select on public.categories to anon;

@@ -5,6 +5,7 @@ const MESSAGES_UPDATED_EVENT = "mcl_messages_updated";
 interface ConversationRow {
   id: string;
   buyer_user_id: string;
+  buyer_display_name: string | null;
   shop_id: string;
   last_message_at: string;
   last_message_preview: string | null;
@@ -23,6 +24,7 @@ interface MessageRow {
 export interface MessageConversation {
   id: string;
   buyerUserId: string;
+  buyerDisplayName: string;
   shopId: string;
   lastMessageAt: string;
   lastMessagePreview: string | null;
@@ -46,6 +48,7 @@ function mapConversationRow(row: ConversationRow): MessageConversation {
   return {
     id: row.id,
     buyerUserId: row.buyer_user_id,
+    buyerDisplayName: row.buyer_display_name?.trim() || "Client",
     shopId: row.shop_id,
     lastMessageAt: row.last_message_at,
     lastMessagePreview: row.last_message_preview ?? null,
@@ -111,7 +114,7 @@ export async function fetchAccessibleConversations(params: {
   if (!hasSupabaseConfig()) return [];
 
   const rows = await requestSupabase<ConversationRow[]>(
-    "conversations?select=id,buyer_user_id,shop_id,last_message_at,last_message_preview,created_at&order=last_message_at.desc",
+    "conversations?select=id,buyer_user_id,buyer_display_name,shop_id,last_message_at,last_message_preview,created_at&order=last_message_at.desc",
     { method: "GET" },
     params.accessToken
   );
@@ -126,7 +129,7 @@ export async function fetchConversation(params: {
   if (!hasSupabaseConfig()) return null;
 
   const rows = await requestSupabase<ConversationRow[]>(
-    `conversations?id=eq.${params.conversationId}&select=id,buyer_user_id,shop_id,last_message_at,last_message_preview,created_at&limit=1`,
+    `conversations?id=eq.${params.conversationId}&select=id,buyer_user_id,buyer_display_name,shop_id,last_message_at,last_message_preview,created_at&limit=1`,
     { method: "GET" },
     params.accessToken
   );
@@ -136,6 +139,7 @@ export async function fetchConversation(params: {
 
 export async function ensureBuyerConversation(params: {
   buyerUserId: string;
+  buyerDisplayName: string;
   shopId: string;
   accessToken: string;
 }): Promise<MessageConversation> {
@@ -144,7 +148,7 @@ export async function ensureBuyerConversation(params: {
   }
 
   const existing = await requestSupabase<ConversationRow[]>(
-    `conversations?buyer_user_id=eq.${params.buyerUserId}&shop_id=eq.${params.shopId}&select=id,buyer_user_id,shop_id,last_message_at,last_message_preview,created_at&limit=1`,
+    `conversations?buyer_user_id=eq.${params.buyerUserId}&shop_id=eq.${params.shopId}&select=id,buyer_user_id,buyer_display_name,shop_id,last_message_at,last_message_preview,created_at&limit=1`,
     { method: "GET" },
     params.accessToken
   );
@@ -152,13 +156,14 @@ export async function ensureBuyerConversation(params: {
 
   try {
     const inserted = await requestSupabase<ConversationRow[]>(
-      "conversations?select=id,buyer_user_id,shop_id,last_message_at,last_message_preview,created_at",
+      "conversations?select=id,buyer_user_id,buyer_display_name,shop_id,last_message_at,last_message_preview,created_at",
       {
         method: "POST",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify([
           {
             buyer_user_id: params.buyerUserId,
+            buyer_display_name: params.buyerDisplayName.trim() || "Client",
             shop_id: params.shopId,
           },
         ]),
@@ -177,7 +182,7 @@ export async function ensureBuyerConversation(params: {
     if (!/duplicate|unique|already exists/i.test(message)) throw error;
 
     const retryRows = await requestSupabase<ConversationRow[]>(
-      `conversations?buyer_user_id=eq.${params.buyerUserId}&shop_id=eq.${params.shopId}&select=id,buyer_user_id,shop_id,last_message_at,last_message_preview,created_at&limit=1`,
+      `conversations?buyer_user_id=eq.${params.buyerUserId}&shop_id=eq.${params.shopId}&select=id,buyer_user_id,buyer_display_name,shop_id,last_message_at,last_message_preview,created_at&limit=1`,
       { method: "GET" },
       params.accessToken
     );
@@ -244,7 +249,7 @@ export async function fetchShopIncomingMessageCount(params: {
   if (!hasSupabaseConfig()) return 0;
 
   const conversations = await requestSupabase<ConversationRow[]>(
-    `conversations?shop_id=eq.${params.shopId}&select=id,buyer_user_id,shop_id,last_message_at,last_message_preview,created_at`,
+    `conversations?shop_id=eq.${params.shopId}&select=id,buyer_user_id,buyer_display_name,shop_id,last_message_at,last_message_preview,created_at`,
     { method: "GET" },
     params.accessToken
   );

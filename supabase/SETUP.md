@@ -19,6 +19,18 @@
 - Renseigne:
   - `NEXT_PUBLIC_SUPABASE_URL`
   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+
+## 3.1) Notifications email messages
+- Pour la queue de notifications email, execute aussi:
+  - `supabase/migrations/20260323_message_email_notification_jobs.sql`
+- Variables serveur a preparer:
+  - `APP_URL`
+  - `EMAIL_PROVIDER`
+  - `EMAIL_FROM`
+  - `RESEND_API_KEY` ou `BREVO_API_KEY`
+  - `NOTIFICATION_WORKER_SECRET`
+- Tant qu'aucun provider n'est configure, les jobs seront crees mais marques `provider_missing`.
 
 ## 4) Vérifier les tables
 - Dans `Table Editor`, vérifie la présence de:

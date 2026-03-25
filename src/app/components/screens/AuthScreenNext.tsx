@@ -91,6 +91,15 @@ export function AuthScreenNext() {
   const [profileMessage, setProfileMessage] = useState<string | null>(null);
   const [isHandlingExternalAuthReturn, setIsHandlingExternalAuthReturn] = useState(false);
 
+  const handleRoleChoice = useCallback(
+    (nextRole: "buyer" | "seller", nextMode: "login" | "signup") => {
+      setRole(nextRole);
+      setMode(nextMode);
+      setErrorMessage(null);
+    },
+    []
+  );
+
   // Pre-select role from URL params (e.g. /auth?role=seller)
   useEffect(() => {
     if (requestedRole === "seller" || requestedRole === "buyer") {
@@ -327,35 +336,65 @@ export function AuthScreenNext() {
           </p>
 
           <div className="w-full space-y-4">
-            <button
-              onClick={() => setRole("buyer")}
-              className="w-full flex items-center gap-4 bg-white rounded-2xl p-5 border border-border/50 shadow-sm hover:shadow-md hover:border-coral/30 transition-all"
-            >
-              <div className="w-14 h-14 bg-coral-light rounded-2xl flex items-center justify-center flex-shrink-0">
-                <ShoppingBag className="w-7 h-7 text-coral" />
+            <div className="w-full bg-white rounded-2xl p-5 border border-border/50 shadow-sm">
+              <div className="flex items-start gap-4">
+                <div className="w-14 h-14 bg-coral-light rounded-2xl flex items-center justify-center flex-shrink-0">
+                  <ShoppingBag className="w-7 h-7 text-coral" />
+                </div>
+                <div className="min-w-0 flex-1 text-left">
+                  <h3>Je cherche un cadeau</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Découvrir les boutiques et acheter localement
+                  </p>
+                  <div className="mt-3 flex items-center gap-5 text-sm font-medium">
+                    <button
+                      type="button"
+                      onClick={() => handleRoleChoice("buyer", "login")}
+                      className="text-foreground hover:text-coral transition-colors"
+                    >
+                      Se connecter
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRoleChoice("buyer", "signup")}
+                      className="text-coral hover:text-coral/80 transition-colors"
+                    >
+                      S'inscrire
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="text-left">
-                <p>Je cherche un cadeau</p>
-                <p className="text-sm text-muted-foreground">
-                  Découvrir les boutiques et acheter localement
-                </p>
-              </div>
-            </button>
+            </div>
 
-            <button
-              onClick={() => setRole("seller")}
-              className="w-full flex items-center gap-4 bg-white rounded-2xl p-5 border border-border/50 shadow-sm hover:shadow-md hover:border-green/30 transition-all"
-            >
-              <div className="w-14 h-14 bg-green-light rounded-2xl flex items-center justify-center flex-shrink-0">
-                <Store className="w-7 h-7 text-green" />
+            <div className="w-full bg-white rounded-2xl p-5 border border-border/50 shadow-sm">
+              <div className="flex items-start gap-4">
+                <div className="w-14 h-14 bg-green-light rounded-2xl flex items-center justify-center flex-shrink-0">
+                  <Store className="w-7 h-7 text-green" />
+                </div>
+                <div className="min-w-0 flex-1 text-left">
+                  <h3>Je suis commerçant</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Vendre mes produits sur la plateforme
+                  </p>
+                  <div className="mt-3 flex items-center gap-5 text-sm font-medium">
+                    <button
+                      type="button"
+                      onClick={() => handleRoleChoice("seller", "login")}
+                      className="text-foreground hover:text-green transition-colors"
+                    >
+                      Se connecter
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRoleChoice("seller", "signup")}
+                      className="text-green hover:text-green/80 transition-colors"
+                    >
+                      S'inscrire
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="text-left">
-                <p>Je suis commerçant</p>
-                <p className="text-sm text-muted-foreground">
-                  Vendre mes produits sur la plateforme
-                </p>
-              </div>
-            </button>
+            </div>
           </div>
         </div>
       </div>

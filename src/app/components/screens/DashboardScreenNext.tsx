@@ -10,14 +10,21 @@ import {
   Eye,
   MessageCircle,
   Settings,
-  Bell,
   Store,
   Pencil,
   Trash2,
   Power,
   Newspaper,
   Users,
+  LogOut,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import { getLeadStats } from "../../services/leadEvents";
 import { fetchShopIncomingMessageCount, subscribeToMessages } from "../../services/messages";
 import {
@@ -41,7 +48,7 @@ import { fetchShopFollowers, fetchShopFollowersCount, type ShopFollowerItem } fr
 export function DashboardScreenNext() {
   const router = useRouter();
   const push = (path: string) => router.push(path);
-  const { user, accessToken } = useAuth();
+  const { user, accessToken, logout } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [productActionMessage, setProductActionMessage] = useState<string | null>(null);
@@ -66,6 +73,11 @@ export function DashboardScreenNext() {
   const [messageCount, setMessageCount] = useState(0);
   const fullName = `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim();
   const displayName = user?.shopName || fullName || "Votre boutique";
+  const greetingName = (() => {
+    const baseName = (user?.firstName ?? "").trim() || displayName;
+    if (!baseName) return "bonjour";
+    return baseName.charAt(0).toUpperCase() + baseName.slice(1).toLowerCase();
+  })();
   const publicShopHref = getShopHref({
     id: shopId ?? user?.id ?? "seller",
     name: displayName,
@@ -76,6 +88,13 @@ export function DashboardScreenNext() {
     () => getLeadStats({ shopId: shopId ?? "seller", sinceDays: 30, excludeActorUserId: user?.id }),
     [shopId, user?.id]
   );
+  const stats = [
+    { icon: "💰", label: "Ventes ce mois", value: "-", onClick: undefined },
+    { icon: "📩", label: "Demandes (30j)", value: String(leadStats.reservationRequest), onClick: undefined },
+    { icon: "👁️", label: "Vues boutique", value: String(leadStats.viewShop), onClick: undefined },
+    { icon: "💬", label: "Messages", value: String(messageCount), onClick: () => push("/messages") },
+    { icon: "👥", label: "Abonnés", value: String(followersCount), onClick: undefined },
+  ] as const;
 
   useEffect(() => {
     if (!user) return;
@@ -262,6 +281,19 @@ export function DashboardScreenNext() {
   if (!user || !user.siretVerified) {
     return null;
   }
+
+  const handleOpenSellerPreview = () => {
+    push(previewShopHref);
+  };
+
+  const handleLogout = () => {
+    const run = async () => {
+      await logout();
+      push("/home");
+    };
+
+    void run();
+  };
 
   const sellerShopPath = shopPublished ? publicShopHref : previewShopHref;
 
@@ -566,11 +598,8 @@ export function DashboardScreenNext() {
     <div className="min-h-screen bg-background">
       <header className="bg-white border-b border-border px-4 lg:px-8 py-3">
         <div className="flex items-center justify-between max-w-6xl mx-auto">
-          <Logo size="xl" href="/home" />
-          <div className="flex items-center gap-3">
-            <button className="relative">
-              <Bell className="w-5 h-5 text-muted-foreground" />
-            </button>
+          <Logo size="lg" href="/home" />
+          <div className="hidden items-center gap-3 lg:flex">
             <button
               onClick={() => push("/settings")}
               className="h-9 px-3 rounded-full border border-border bg-white hover:bg-muted transition-colors inline-flex items-center gap-1.5 text-sm"
@@ -579,63 +608,96 @@ export function DashboardScreenNext() {
               Parametres
             </button>
             <button
-onClick={() => {
-                  if (typeof window !== "undefined") {
-                    window.open(previewShopHref, "_blank", "noopener,noreferrer");
-                  }
-                }}              className="h-9 px-3 rounded-full bg-green-light inline-flex items-center gap-1.5 max-w-[220px] hover:bg-green-light/80 transition-colors"
+              onClick={handleOpenSellerPreview}
+              className="h-9 px-3 rounded-full bg-green-light inline-flex items-center gap-1.5 max-w-[220px] hover:bg-green-light/80 transition-colors"
               title={displayName}
             >
               <Store className="w-4 h-4 text-green flex-shrink-0" />
               <span className="text-sm truncate">{displayName}</span>
             </button>
           </div>
+          <div className="lg:hidden">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-white transition-colors hover:bg-muted"
+                  aria-label="Ouvrir les options vendeur"
+                >
+                  <Settings className="h-5 w-5 text-muted-foreground" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[220px] rounded-xl border-border p-1.5">
+                <DropdownMenuItem onSelect={handleOpenSellerPreview} className="cursor-pointer rounded-lg px-3 py-2 text-sm">
+                  Voir ma vitrine
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => push("/add-product")} className="cursor-pointer rounded-lg px-3 py-2 text-sm">
+                  Ajouter un produit
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => push("/messages")} className="cursor-pointer rounded-lg px-3 py-2 text-sm">
+                  Messages
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => push("/settings")} className="cursor-pointer rounded-lg px-3 py-2 text-sm">
+                  Paramètres
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={handleLogout} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-destructive">
+                  <LogOut className="h-4 w-4" />
+                  Déconnexion
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </header>
 
       <div className="max-w-6xl mx-auto px-4 lg:px-8 py-6">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1>Bonjour, {displayName} 👋</h1>
+        <div className="mb-6 flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-[2rem] leading-[1.05] tracking-tight lg:text-[2.75rem]">
+              Bonjour, {greetingName} 👋
+            </h1>
             <p className="text-muted-foreground text-sm">
-              Voici un apercu de votre activite
+              Voici un aperçu de votre activité
             </p>
           </div>
           <Button
+            size="sm"
             icon={<Plus className="w-4 h-4" />}
             onClick={() => push("/add-product")}
+            className="shrink-0 rounded-2xl px-4 py-3"
           >
             <span className="hidden sm:inline">Ajouter un produit</span>
-            <span className="sm:hidden">Ajouter</span>
+            <span className="sm:hidden">Nouveau produit</span>
           </Button>
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
-          <StatCard
-            icon="💰"
-            label="Ventes ce mois"
-            value="-"
-          />
-          <StatCard
-            icon="📩"
-            label="Demandes (30j)"
-            value={String(leadStats.reservationRequest)}
-          />
-          <StatCard
-            icon="👁️"
-            label="Vues boutique"
-            value={String(leadStats.viewShop)}
-          />
-          <StatCard
-            icon="💬"
-            label="Messages"
-            value={String(messageCount)}
-          />
-          <StatCard
-            icon="👥"
-            label="Abonnés"
-            value={String(followersCount)}
-          />
+          {stats.map((item) => {
+            const card = (
+              <StatCard
+                icon={item.icon}
+                label={item.label}
+                value={item.value}
+              />
+            );
+
+            if (!item.onClick) {
+              return <div key={item.label}>{card}</div>;
+            }
+
+            return (
+              <button
+                key={item.label}
+                type="button"
+                onClick={item.onClick}
+                className="rounded-2xl text-left transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-coral/30"
+                aria-label={`Ouvrir ${item.label}`}
+              >
+                {card}
+              </button>
+            );
+          })}
         </div>
 
         <div className="bg-white rounded-2xl p-4 border border-border/50 shadow-sm mb-6">

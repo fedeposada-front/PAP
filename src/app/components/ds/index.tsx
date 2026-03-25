@@ -25,25 +25,28 @@ export function CategoryIcon({ icon, className = "" }: { icon: string; className
 }
 
 // ─── BUTTONS ───────────────────────────────────────────
-export function Button({
-  children,
-  variant = "primary",
-  size = "md",
-  fullWidth = false,
-  icon,
-  onClick,
-  disabled = false,
-  className = "",
-}: {
+type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   children: React.ReactNode;
   variant?: "primary" | "secondary" | "outline" | "ghost" | "accent";
   size?: "sm" | "md" | "lg";
   fullWidth?: boolean;
   icon?: React.ReactNode;
-  onClick?: () => void;
-  disabled?: boolean;
-  className?: string;
-}) {
+};
+
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    children,
+    variant = "primary",
+    size = "md",
+    fullWidth = false,
+    icon,
+    disabled = false,
+    className = "",
+    type = "button",
+    ...props
+  },
+  ref
+) {
   const base =
     "inline-flex items-center justify-center gap-2 rounded-xl transition-all duration-200 cursor-pointer select-none";
   const variants = {
@@ -60,8 +63,10 @@ export function Button({
   };
   return (
     <button
-      onClick={onClick}
+      ref={ref}
+      type={type}
       disabled={disabled}
+      {...props}
       className={`${base} ${variants[variant]} ${sizes[size]} ${
         fullWidth ? "w-full" : ""
       } ${disabled ? "opacity-50 cursor-not-allowed" : ""} ${className}`}
@@ -70,7 +75,7 @@ export function Button({
       {children}
     </button>
   );
-}
+});
 
 // ─── BADGE ─────────────────────────────────────────────
 export function Badge({
@@ -373,9 +378,9 @@ export function BottomSheet({
 }) {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center">
+    <div className="fixed inset-0 z-[1200] flex items-end justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-t-3xl w-full max-w-lg max-h-[80vh] overflow-auto animate-in slide-in-from-bottom">
+      <div className="relative z-[1201] w-full max-w-lg max-h-[80vh] overflow-auto rounded-t-3xl bg-white animate-in slide-in-from-bottom">
         <div className="sticky top-0 bg-white pt-3 pb-2 px-5 border-b border-border">
           <div className="w-10 h-1 bg-muted rounded-full mx-auto mb-3" />
           <div className="flex items-center justify-between">

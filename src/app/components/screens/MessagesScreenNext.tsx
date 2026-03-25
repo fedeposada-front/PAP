@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Send, ImageIcon, ChevronRight } from "lucide-react";
-import { Header, Badge, Button } from "../ds";
+import { Badge, Button, Logo } from "../ds";
 import { fetchShops } from "../../services/catalog";
 import type { Shop } from "../../types/catalog";
 import { getShopHref } from "../../utils/shopRouting";
@@ -18,6 +18,7 @@ import {
   type ConversationMessage,
   type MessageConversation,
 } from "../../services/messages";
+import { triggerMessageEmailNotificationDispatch } from "../../services/messageNotifications";
 
 function formatMessageTime(value: string) {
   return new Date(value).toLocaleTimeString("fr-FR", {
@@ -41,11 +42,54 @@ function formatConversationTime(value: string) {
   }).format(date);
 }
 
+function MessagesHeader({
+  onBack,
+  right,
+}: {
+  onBack?: () => void;
+  right?: React.ReactNode;
+}) {
+  const router = useRouter();
+
+  return (
+    <header className="flex items-center justify-between border-b border-border bg-white px-4 py-3">
+      <div className="flex w-20 justify-start">
+        {onBack ? (
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-white/80 transition-colors hover:bg-muted"
+            aria-label="Revenir"
+          >
+            <ChevronRight className="h-5 w-5 rotate-180" />
+          </button>
+        ) : null}
+      </div>
+      <div className="flex flex-1 justify-center">
+        <Logo size="md" href="/home" />
+      </div>
+      <div className="flex w-20 justify-end">
+        {right ?? (
+          <button
+            type="button"
+            onClick={() => router.push("/home")}
+            className="text-sm text-coral"
+          >
+            Accueil
+          </button>
+        )}
+      </div>
+    </header>
+  );
+}
+
 function ConversationList({
   accessToken,
+  currentUserId,
   onSelect,
 }: {
   accessToken: string;
+  currentUserId: string;
   onSelect: (conversationId: string) => void;
 }) {
   const [conversations, setConversations] = useState<MessageConversation[]>([]);
@@ -121,7 +165,7 @@ function ConversationList({
 
   return (
     <div className="min-h-screen flex flex-col bg-background pb-16">
-      <Header title="Messages" />
+      <MessagesHeader />
       <div className="flex-1 px-4 py-3">
         {loadError && (
           <div className="mb-4 rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -145,7 +189,17 @@ function ConversationList({
           <div className="space-y-2">
             {conversations.map((conversation) => {
               const shop = shopById.get(conversation.shopId);
+              const isBuyerView = conversation.buyerUserId === currentUserId;
               const preview = conversation.lastMessagePreview?.trim() || "Nouvelle conversation";
+              const title = isBuyerView
+                ? shop?.name ?? "Boutique"
+                : conversation.buyerDisplayName;
+              const avatarLabel = isBuyerView
+                ? shop?.name ?? "Boutique"
+                : conversation.buyerDisplayName;
+              const avatarSrc = isBuyerView
+                ? (shop?.image ?? "https://placehold.co/96x96?text=MCL")
+                : null;
 
               return (
                 <button
@@ -153,14 +207,20 @@ function ConversationList({
                   onClick={() => onSelect(conversation.id)}
                   className="w-full flex items-center gap-3 p-3 bg-white rounded-2xl border border-border/50 shadow-sm hover:shadow-md transition-shadow text-left"
                 >
-                  <img
-                    src={shop?.image ?? "https://placehold.co/96x96?text=MCL"}
-                    alt={shop?.name ?? "Boutique"}
-                    className="w-12 h-12 rounded-xl object-cover flex-shrink-0"
-                  />
+                  {avatarSrc ? (
+                    <img
+                      src={avatarSrc}
+                      alt={avatarLabel}
+                      className="w-12 h-12 rounded-xl object-cover flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-coral/12 text-base font-semibold text-coral">
+                      {avatarLabel.trim().charAt(0).toUpperCase() || "C"}
+                    </div>
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm truncate">{shop?.name ?? "Boutique"}</p>
+                      <p className="text-sm truncate">{title}</p>
                       <span className="text-[11px] text-muted-foreground flex-shrink-0">
                         {formatConversationTime(conversation.lastMessageAt)}
                       </span>
@@ -181,11 +241,15 @@ function ConversationList({
 function ChatView({
   conversationId,
   accessToken,
+  currentUserId,
   onBack,
+  returnToOrigin,
 }: {
   conversationId: string;
   accessToken: string;
+  currentUserId: string;
   onBack: () => void;
+  returnToOrigin?: () => void;
 }) {
   const router = useRouter();
   const push = (path: string) => router.push(path);
@@ -272,6 +336,13 @@ function ChatView({
   }, [messages]);
 
   const shop = shops.find((entry) => entry.id === conversation?.shopId);
+  const isBuyerView = conversation?.buyerUserId === currentUserId;
+  const counterpartName = isBuyerView
+    ? shop?.name ?? "Boutique"
+    : conversation?.buyerDisplayName ?? "Client";
+  const counterpartAvatarSrc = isBuyerView
+    ? (shop?.image ?? "https://placehold.co/96x96?text=MCL")
+    : null;
 
   const handleSend = async () => {
     const text = input.trim();
@@ -279,10 +350,14 @@ function ChatView({
 
     try {
       setIsSending(true);
-      await sendConversationMessage({
+      const createdMessage = await sendConversationMessage({
         conversationId,
         senderUserId: user.id,
         text,
+        accessToken,
+      });
+      void triggerMessageEmailNotificationDispatch({
+        messageId: createdMessage.id,
         accessToken,
       });
       setInput("");
@@ -297,12 +372,12 @@ function ChatView({
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      <Header
-        title=""
-        onBack={onBack}
+      <MessagesHeader
+        onBack={returnToOrigin ?? onBack}
         right={
-          shop ? (
+          shop && isBuyerView ? (
             <button
+              type="button"
               onClick={() => push(getShopHref(shop))}
               className="text-coral text-sm"
             >
@@ -312,20 +387,30 @@ function ChatView({
         }
       />
       <div className="flex items-center gap-3 px-4 py-2.5 bg-white border-b border-border">
-        {shop ? (
+        {conversation ? (
           <>
-            <img
-              src={shop.image ?? "https://placehold.co/96x96?text=MCL"}
-              alt={shop.name}
-              className="w-10 h-10 rounded-lg object-cover"
-            />
+            {counterpartAvatarSrc ? (
+              <img
+                src={counterpartAvatarSrc}
+                alt={counterpartName}
+                className="w-10 h-10 rounded-lg object-cover"
+              />
+            ) : (
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-coral/12 text-sm font-semibold text-coral">
+                {counterpartName.trim().charAt(0).toUpperCase() || "C"}
+              </div>
+            )}
             <div className="flex-1 min-w-0">
-              <p className="text-sm truncate">{shop.name}</p>
+              <p className="text-sm truncate">{counterpartName}</p>
               <div className="flex items-center gap-1.5">
-                {shop.isOpen ? (
-                  <Badge variant="success">Ouvert</Badge>
+                {isBuyerView ? (
+                  shop?.isOpen ? (
+                    <Badge variant="success">Ouvert</Badge>
+                  ) : (
+                    <Badge variant="default">Fermé</Badge>
+                  )
                 ) : (
-                  <Badge variant="default">Fermé</Badge>
+                  <Badge variant="outline">Acheteur</Badge>
                 )}
               </div>
             </div>
@@ -423,14 +508,17 @@ function ChatView({
 export function MessagesScreenNext() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const conversationIdFromUrl = searchParams.get("conversation");
   const shopIdFromUrl = searchParams.get("shop");
+  const returnPathFromUrl = searchParams.get("from");
   const { isAuthenticated, accessToken, user } = useAuth();
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [originPath, setOriginPath] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!shopIdFromUrl || !accessToken || !user?.id || user.role === "seller") return;
+    if (conversationIdFromUrl || !shopIdFromUrl || !accessToken || !user?.id || user.role === "seller") return;
     let cancelled = false;
 
     const run = async () => {
@@ -439,10 +527,12 @@ export function MessagesScreenNext() {
         setBootstrapError(null);
         const conversation = await ensureBuyerConversation({
           buyerUserId: user.id,
+          buyerDisplayName: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "Client",
           shopId: shopIdFromUrl,
           accessToken,
         });
         if (cancelled) return;
+        setOriginPath(returnPathFromUrl);
         setActiveConversationId(conversation.id);
         router.replace("/messages");
       } catch (error) {
@@ -460,14 +550,39 @@ export function MessagesScreenNext() {
     return () => {
       cancelled = true;
     };
-  }, [shopIdFromUrl, accessToken, user?.id, user?.role, router]);
+  }, [
+    conversationIdFromUrl,
+    shopIdFromUrl,
+    returnPathFromUrl,
+    accessToken,
+    user?.id,
+    user?.role,
+    user?.firstName,
+    user?.lastName,
+    router,
+  ]);
+
+  useEffect(() => {
+    if (!conversationIdFromUrl || !accessToken || !user?.id) return;
+    setBootstrapError(null);
+    setOriginPath(returnPathFromUrl);
+    setActiveConversationId(conversationIdFromUrl);
+    router.replace("/messages");
+  }, [conversationIdFromUrl, returnPathFromUrl, accessToken, user?.id, router]);
 
   if (!isAuthenticated || !accessToken || !user?.id) {
-    const nextPath = shopIdFromUrl ? `/messages?shop=${shopIdFromUrl}` : "/messages";
+    const nextPath = (() => {
+      const params = new URLSearchParams();
+      if (conversationIdFromUrl) params.set("conversation", conversationIdFromUrl);
+      if (shopIdFromUrl) params.set("shop", shopIdFromUrl);
+      if (returnPathFromUrl) params.set("from", returnPathFromUrl);
+      const query = params.toString();
+      return query ? `/messages?${query}` : "/messages";
+    })();
 
     return (
       <div className="min-h-screen flex flex-col bg-background pb-16">
-        <Header title="Messages" />
+        <MessagesHeader />
         <div className="flex-1 flex items-center justify-center px-4">
           <div className="w-full max-w-sm rounded-3xl border border-border bg-white p-6 text-center shadow-sm">
             <span className="text-5xl">💬</span>
@@ -489,8 +604,11 @@ export function MessagesScreenNext() {
 
   if (isBootstrapping) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background px-4">
-        <p className="text-muted-foreground">Ouverture de la conversation...</p>
+      <div className="min-h-screen flex flex-col bg-background pb-16">
+        <MessagesHeader />
+        <div className="flex flex-1 items-center justify-center px-4">
+          <p className="text-muted-foreground">Ouverture de la conversation...</p>
+        </div>
       </div>
     );
   }
@@ -498,7 +616,7 @@ export function MessagesScreenNext() {
   if (bootstrapError) {
     return (
       <div className="min-h-screen flex flex-col bg-background pb-16">
-        <Header title="Messages" onBack={() => router.push("/home")} />
+        <MessagesHeader onBack={() => router.push("/home")} />
         <div className="px-4 pt-4">
           <div className="rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
             {bootstrapError}
@@ -513,7 +631,9 @@ export function MessagesScreenNext() {
       <ChatView
         conversationId={activeConversationId}
         accessToken={accessToken}
+        currentUserId={user.id}
         onBack={() => setActiveConversationId(null)}
+        returnToOrigin={originPath ? () => router.push(originPath) : undefined}
       />
     );
   }
@@ -521,7 +641,11 @@ export function MessagesScreenNext() {
   return (
     <ConversationList
       accessToken={accessToken}
-      onSelect={(conversationId) => setActiveConversationId(conversationId)}
+      currentUserId={user.id}
+      onSelect={(conversationId) => {
+        setOriginPath(null);
+        setActiveConversationId(conversationId);
+      }}
     />
   );
 }

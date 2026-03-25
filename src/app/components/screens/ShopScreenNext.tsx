@@ -19,7 +19,7 @@ import { useAuth } from "../AuthContext";
 import { trackLeadEvent } from "../../services/leadEvents";
 import { fetchProductsByShopId, fetchShopById, fetchShops } from "../../services/catalog";
 import type { Product, Shop } from "../../types/catalog";
-import { getProductHref, toShopSlug } from "../../utils/shopRouting";
+import { getProductHref, getShopHref, toShopSlug } from "../../utils/shopRouting";
 import { getCategoryLabel } from "../../data/catalog";
 import { fetchPublicShopNews, type ShopNewsItem } from "../../services/shopNews";
 import { fetchShopSettings } from "../../services/shopSettings";
@@ -254,6 +254,11 @@ export function ShopScreenNext() {
   };
 
   const handleMessage = () => {
+    const currentPath =
+      typeof window !== "undefined"
+        ? `${window.location.pathname}${window.location.search}`
+        : getShopHref(shop);
+    const messageUrl = `/messages?shop=${encodeURIComponent(shop.id)}&from=${encodeURIComponent(currentPath)}`;
     trackLeadEvent({
       type: "click_message",
       actorUserId: user?.id,
@@ -261,10 +266,10 @@ export function ShopScreenNext() {
       metadata: { source: "shop_screen" },
     });
     if (!user?.id || !accessToken) {
-      push(`/auth?next=${encodeURIComponent(`/messages?shop=${shop.id}`)}`);
+      push(`/auth?next=${encodeURIComponent(messageUrl)}`);
       return;
     }
-    push(`/messages?shop=${shop.id}`);
+    push(messageUrl);
   };
 
   const handleShare = () => {
