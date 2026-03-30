@@ -4,7 +4,7 @@ import { AppProviders } from "./providers";
 import { AppBottomNav } from "../src/app/components/AppBottomNav";
 
 export const metadata: Metadata = {
-  title: "MonCadeauLocal",
+  title: "Lovcal",
   description: "Plateforme de decouverte locale pour trouver un cadeau pres de chez vous.",
   formatDetection: {
     telephone: false,

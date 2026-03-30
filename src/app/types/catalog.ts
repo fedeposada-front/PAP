@@ -1,3 +1,6 @@
+export type BusinessType = "product" | "service" | "hybrid";
+export type OfferType = "product" | "service";
+
 export interface ShopTeamMember {
   name: string;
   role: string;
@@ -7,6 +10,7 @@ export interface ShopTeamMember {
 export interface Shop {
   id: string;
   slug?: string;
+  businessType: BusinessType;
   name: string;
   postalCode?: string;
   category: string;
@@ -36,6 +40,7 @@ export interface Product {
   id: string;
   shopId: string;
   collectionId?: string;
+  offerType: OfferType;
   shopName: string;
   shopSlug?: string;
   title: string;

@@ -101,11 +101,11 @@ function buildReplyEmail(params: {
   const safeBody = escapeHtml(params.messageBody).replaceAll("\n", "<br />");
 
   return {
-    subject: `Nouveau message de ${params.senderLabel} sur MonCadeauLocal`,
+    subject: `Nouveau message de ${params.senderLabel} sur Lovcal`,
     text: [
       `Bonjour ${params.recipientLabel},`,
       "",
-      `${params.senderLabel} vous a envoye un nouveau message sur MonCadeauLocal :`,
+      `${params.senderLabel} vous a envoye un nouveau message sur Lovcal :`,
       "",
       params.messageBody,
       "",
@@ -113,7 +113,7 @@ function buildReplyEmail(params: {
     ].join("\n"),
     html: [
       `<p>Bonjour ${safeRecipient},</p>`,
-      `<p><strong>${safeSender}</strong> vous a envoye un nouveau message sur MonCadeauLocal :</p>`,
+      `<p><strong>${safeSender}</strong> vous a envoye un nouveau message sur Lovcal :</p>`,
       `<blockquote style="margin:16px 0;padding:12px 16px;border-left:4px solid #ef6f79;background:#fff5f5;border-radius:8px;">${safeBody}</blockquote>`,
       `<p><a href="${escapeHtml(params.conversationUrl)}" style="display:inline-block;padding:12px 18px;background:#ef6f79;color:#ffffff;text-decoration:none;border-radius:999px;">Voir la conversation</a></p>`,
     ].join(""),

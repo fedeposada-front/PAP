@@ -1,9 +1,10 @@
-import type { Product } from "../types/catalog";
+import type { OfferType, Product } from "../types/catalog";
+import { fetchManagedShopAccess } from "./shopAccess";
 import { toShopSlug } from "../utils/shopRouting";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-const FALLBACK_IMAGE = "https://placehold.co/640x640?text=MonCadeauLocal";
+const FALLBACK_IMAGE = "https://placehold.co/640x640?text=Lovcal";
 
 interface ShopRow {
   id: string;
@@ -74,6 +75,7 @@ interface ProductRow {
   id: string;
   shop_id: string;
   collection_id?: string | null;
+  offer_type?: string | null;
   title: string;
   description: string | null;
   features: string | null;
@@ -119,6 +121,10 @@ interface RequestOptions {
 }
 
 type ProductMutationPayload = Record<string, unknown>;
+
+function normalizeOfferType(value: string | null | undefined): OfferType {
+  return value === "service" ? "service" : "product";
+}
 
 function hasSupabaseConfig() {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -188,7 +194,7 @@ async function runProductMutation(params: {
       return;
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (!isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors", "collection_id", "main_image_url", "image_urls", "categories"])) {
+      if (!isSchemaColumnError(message, ["offer_type", "features", "composition", "return_conditions", "color", "colors", "collection_id", "main_image_url", "image_urls", "categories"])) {
         throw error;
       }
       lastSchemaError = error instanceof Error ? error : new Error("Product mutation failed.");
@@ -202,13 +208,13 @@ async function runProductMutation(params: {
 
 async function fetchProductRowsWithFallback(encodedIds: string, accessToken: string): Promise<ProductRow[]> {
   const selectVariants = [
-    "id,shop_id,collection_id,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
-    "id,shop_id,collection_id,title,description,features,composition,return_conditions,color,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
-    "id,shop_id,title,description,features,composition,return_conditions,color,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
-    "id,shop_id,collection_id,title,description,features,composition,return_conditions,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
-    "id,shop_id,title,description,features,composition,return_conditions,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
-    "id,shop_id,collection_id,title,description,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
-    "id,shop_id,title,description,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,collection_id,offer_type,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,collection_id,offer_type,title,description,features,composition,return_conditions,color,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,offer_type,title,description,features,composition,return_conditions,color,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,collection_id,offer_type,title,description,features,composition,return_conditions,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,offer_type,title,description,features,composition,return_conditions,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,collection_id,offer_type,title,description,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
+    "id,shop_id,offer_type,title,description,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
     "id,shop_id,collection_id,title,description,features,composition,return_conditions,color,price,image_url,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
     "id,shop_id,title,description,features,composition,return_conditions,color,price,image_url,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
     "id,shop_id,collection_id,title,description,features,composition,return_conditions,price,image_url,category,available_today,stock,pickup,delivery,created_at,is_published,sold_count",
@@ -228,7 +234,7 @@ async function fetchProductRowsWithFallback(encodedIds: string, accessToken: str
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (!isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors", "collection_id", "main_image_url", "image_urls", "categories"])) {
+      if (!isSchemaColumnError(message, ["offer_type", "features", "composition", "return_conditions", "color", "colors", "collection_id", "main_image_url", "image_urls", "categories"])) {
         throw error;
       }
       lastSchemaError = error instanceof Error ? error : new Error("Product fetch failed.");
@@ -252,6 +258,7 @@ function mapProduct(row: ProductRow, shopName: string): Product {
     id: row.id,
     shopId: row.shop_id,
     collectionId: row.collection_id ?? undefined,
+    offerType: normalizeOfferType(row.offer_type),
     shopName,
     shopSlug,
     title: row.title,
@@ -310,6 +317,14 @@ async function fetchShopCollectionRows(path: string, accessToken: string): Promi
 }
 
 async function getOrCreateSellerShop(userId: string, accessToken: string): Promise<ShopRow> {
+  const existingAccess = await fetchManagedShopAccess({ userId, accessToken });
+  if (existingAccess?.shopId) {
+    return {
+      id: existingAccess.shopId,
+      name: existingAccess.shopName,
+    };
+  }
+
   const existing = await requestSupabase<ShopRow[]>(
     `shops?owner_user_id=eq.${userId}&select=id,name,slug&order=created_at.asc&limit=1`,
     { method: "GET" },
@@ -373,6 +388,27 @@ export async function fetchSellerProducts(params: {
   accessToken: string;
 }): Promise<Product[]> {
   if (!hasSupabaseConfig()) return [];
+
+  const accessible = await fetchManagedShopAccess({
+    userId: params.userId,
+    accessToken: params.accessToken,
+  });
+  if (accessible?.shopId) {
+    const shops = [{ id: accessible.shopId, name: accessible.shopName, slug: toShopSlug(accessible.shopName) }];
+    const productRows = await fetchProductRowsWithFallback(
+      encodeInList([accessible.shopId]),
+      params.accessToken
+    );
+    const shopById = new Map(shops.map((shop) => [shop.id, shop]));
+    return productRows.map((row) => {
+      const shop = shopById.get(row.shop_id);
+      const product = mapProduct(row, shop?.name ?? "Entreprise");
+      return {
+        ...product,
+        shopSlug: shop?.slug?.trim() || product.shopSlug,
+      };
+    });
+  }
 
   const ownerShops = await requestSupabase<ShopRow[]>(
     `shops?owner_user_id=eq.${params.userId}&select=id,name,slug`,
@@ -527,6 +563,7 @@ export async function createSellerShopCollection(params: {
 export async function createSellerProduct(params: {
   userId: string;
   accessToken: string;
+  offerType?: OfferType;
   title: string;
   description: string;
   features: string;
@@ -561,10 +598,12 @@ export async function createSellerProduct(params: {
   const primaryCategory = normalizedCategories[0] ?? "artisanat";
   const normalizedCollectionId = params.collectionId?.trim() || null;
   const primaryColor = params.color.trim();
+  const offerType = params.offerType ?? "product";
 
   const basePayload = {
     shop_id: shop.id,
     ...(normalizedCollectionId ? { collection_id: normalizedCollectionId } : {}),
+    offer_type: offerType,
     title: params.title,
     description: params.description,
     price: params.price,
@@ -676,6 +715,7 @@ export async function createSellerProduct(params: {
 export async function updateSellerProduct(params: {
   productId: string;
   accessToken: string;
+  offerType?: OfferType;
   title: string;
   description: string;
   features: string;
@@ -708,9 +748,11 @@ export async function updateSellerProduct(params: {
   const primaryCategory = normalizedCategories[0] ?? "artisanat";
   const normalizedCollectionId = params.collectionId?.trim() || null;
   const primaryColor = params.color.trim();
+  const offerType = params.offerType ?? "product";
 
   const basePayload = {
     ...(normalizedCollectionId ? { collection_id: normalizedCollectionId } : { collection_id: null }),
+    offer_type: offerType,
     title: params.title,
     description: params.description,
     price: params.price,
@@ -830,6 +872,7 @@ export async function duplicateSellerProduct(params: {
   await createSellerProduct({
     userId: params.userId,
     accessToken: params.accessToken,
+    offerType: params.product.offerType,
     title: params.product.title,
     description: params.product.description,
     features: params.product.features ?? "",

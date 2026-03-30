@@ -23,6 +23,7 @@ import { trackLeadEvent } from "../../services/leadEvents";
 import { fetchProductById, fetchShopById } from "../../services/catalog";
 import { fetchSellerProducts } from "../../services/sellerProducts";
 import { fetchShopSettings } from "../../services/shopSettings";
+import { isShopInternalUser } from "../../services/shopAccess";
 import { favoriteProduct, fetchIsFavoriteProduct, unfavoriteProduct } from "../../services/favoriteProducts";
 import type { Product, Shop } from "../../types/catalog";
 import { getProductHref, getShopHref } from "../../utils/shopRouting";
@@ -48,6 +49,7 @@ export function ProductScreenNext() {
   const [cartPulse, setCartPulse] = useState(false);
   const [liked, setLiked] = useState(false);
   const [isFavoritePending, setIsFavoritePending] = useState(false);
+  const [isPurchaseBlocked, setIsPurchaseBlocked] = useState(false);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -76,10 +78,14 @@ export function ProductScreenNext() {
               nextShop = {
                 id: privateShop.id,
                 slug: privateShop.slug ?? undefined,
+                businessType:
+                  privateShop.business_type === "service" || privateShop.business_type === "hybrid"
+                    ? privateShop.business_type
+                    : "product",
                 name: privateShop.name,
                 category: privateShop.category,
-                image: privateShop.logo_image_url ?? "https://placehold.co/640x640?text=MonCadeauLocal",
-                bannerImage: privateShop.banner_image_url ?? privateShop.logo_image_url ?? "https://placehold.co/640x640?text=MonCadeauLocal",
+                image: privateShop.logo_image_url ?? "https://placehold.co/640x640?text=Lovcal",
+                bannerImage: privateShop.banner_image_url ?? privateShop.logo_image_url ?? "https://placehold.co/640x640?text=Lovcal",
                 rating: 0,
                 reviewCount: 0,
                 distance: privateShop.city || "-",
@@ -152,6 +158,37 @@ export function ProductScreenNext() {
   }, [shareFeedback]);
 
   useEffect(() => {
+    if (!product?.shopId || !user?.id || !accessToken || isPreviewMode) {
+      setIsPurchaseBlocked(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const blocked = await isShopInternalUser({
+          shopId: product.shopId,
+          userId: user.id,
+          accessToken,
+        });
+        if (!cancelled) {
+          setIsPurchaseBlocked(blocked);
+        }
+      } catch {
+        if (!cancelled) {
+          setIsPurchaseBlocked(false);
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [product?.shopId, user?.id, accessToken, isPreviewMode]);
+
+  useEffect(() => {
     if (!product?.id || !user?.id || !accessToken || isPreviewMode) {
       setLiked(false);
       return;
@@ -216,10 +253,12 @@ export function ProductScreenNext() {
     );
   }
 
+  const isServiceOffer = product.offerType === "service";
   const effectiveColor = product.color?.trim() || product.colors?.find((entry) => entry.trim()) || "";
-  const productStock = Number.isFinite(product.stock) ? Math.max(0, product.stock) : 0;
+  const productStock = isServiceOffer ? 1 : Number.isFinite(product.stock) ? Math.max(0, product.stock) : 0;
   const maxSelectableQuantity = Math.max(1, productStock);
-  const isOutOfStock = productStock <= 0;
+  const isOutOfStock = !isServiceOffer && productStock <= 0;
+  const priceLabel = isServiceOffer ? `A partir de ${product.price.toFixed(2)} €` : `${product.price.toFixed(2)} €`;
   const infoTabs = [
     { id: "features" as const, label: "CARACTÉRISTIQUES", content: product.features?.trim() || "" },
     { id: "composition" as const, label: "COMPOSITION", content: product.composition?.trim() || "" },
@@ -244,6 +283,15 @@ export function ProductScreenNext() {
   };
 
   const handleAddToCart = (goToCart = false) => {
+    if (isServiceOffer) {
+      return;
+    }
+
+    if (isPurchaseBlocked) {
+      showCartNotice("error", "Vous ne pouvez pas acheter une offre publiée par votre entreprise.");
+      return;
+    }
+
     const result = addItem(
       product,
       product.pickup ? "pickup" : "delivery",
@@ -279,6 +327,37 @@ export function ProductScreenNext() {
     }
   };
 
+  const handleOpenContact = (intent: "message" | "quote") => {
+    const currentPath =
+      typeof window !== "undefined"
+        ? `${window.location.pathname}${window.location.search}`
+        : getProductHref({
+            id: product.id,
+            shopSlug: product.shopSlug,
+            shopName: product.shopName,
+          });
+    const messageUrl = `/messages?shop=${encodeURIComponent(product.shopId)}&from=${encodeURIComponent(currentPath)}`;
+
+    trackLeadEvent({
+      type: "click_message",
+      actorUserId: user?.id,
+      shopId: product.shopId,
+      productId: product.id,
+      metadata: {
+        source: "product_screen",
+        intent,
+        offerType: product.offerType,
+      },
+    });
+
+    if (!user?.id || !accessToken) {
+      push(`/auth?next=${encodeURIComponent(messageUrl)}`);
+      return;
+    }
+
+    push(messageUrl);
+  };
+
   const handleShare = () => {
     const run = async () => {
       if (typeof window === "undefined") return;
@@ -310,7 +389,7 @@ export function ProductScreenNext() {
       const shareUrl = `${window.location.origin}${sharePath}`;
       const shareData = {
         title: product.title,
-        text: `Découvre ${product.title} chez ${shop?.name ?? product.shopName} sur MonCadeauLocal.`,
+        text: `Découvre ${product.title} chez ${shop?.name ?? product.shopName} sur Lovcal.`,
         url: shareUrl,
       };
 
@@ -542,10 +621,27 @@ export function ProductScreenNext() {
             {shop?.name ?? product.shopName}
             <ChevronRight className="w-4 h-4" />
           </button>
-          <h1 className="max-w-[12ch] text-[2rem] leading-tight tracking-[-0.03em] text-slate-950 lg:text-2xl">
+          <h1
+            className={
+              isServiceOffer
+                ? "max-w-none text-[2.15rem] leading-[1.12] tracking-[-0.04em] text-slate-950 lg:text-[2.5rem]"
+                : "max-w-[12ch] text-[2rem] leading-tight tracking-[-0.03em] text-slate-950 lg:text-2xl"
+            }
+          >
             {product.title}
           </h1>
-          <p className="mt-5 text-[1.85rem] tracking-[-0.02em] text-[#f07d86] lg:text-[2rem]">{product.price.toFixed(2)} €</p>
+          {isServiceOffer ? (
+            <div className="mt-5 inline-flex max-w-full flex-col rounded-2xl border border-coral/15 bg-white px-5 py-4 shadow-sm">
+              <span className="text-[0.76rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Tarif indicatif
+              </span>
+              <span className="mt-1 text-[1.45rem] font-semibold leading-tight tracking-[-0.03em] text-[#f07d86] lg:text-[1.7rem]">
+                {priceLabel}
+              </span>
+            </div>
+          ) : (
+            <p className="mt-5 text-[1.85rem] tracking-[-0.02em] text-[#f07d86] lg:text-[2rem]">{priceLabel}</p>
+          )}
 
           {cartNotice && (
             <div
@@ -565,25 +661,29 @@ export function ProductScreenNext() {
             </div>
           )}
 
-          <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[1rem] text-slate-600">
+          <div
+            className={`mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-slate-600 ${
+              isServiceOffer ? "text-[0.98rem]" : "text-[1rem]"
+            }`}
+          >
             {product.availableToday && (
               <span className="inline-flex items-center gap-2 text-[#3a8b46]">
                 <Check className="w-3 h-3" /> Dispo aujourd'hui
               </span>
             )}
             {product.pickup && (
-              <span className="inline-flex items-center gap-2">
-                <MapPin className="w-3 h-3" /> Retrait en boutique
+              <span className={`inline-flex items-center gap-2 ${isServiceOffer ? "rounded-full bg-white px-3 py-2 shadow-sm" : ""}`}>
+                <MapPin className="w-3 h-3" /> {isServiceOffer ? "Sur place" : "Retrait en boutique"}
               </span>
             )}
             {product.delivery && (
-              <span className="inline-flex items-center gap-2">
-                <Truck className="w-3 h-3" /> Livraison
+              <span className={`inline-flex items-center gap-2 ${isServiceOffer ? "rounded-full bg-white px-3 py-2 shadow-sm" : ""}`}>
+                <Truck className="w-3 h-3" /> {isServiceOffer ? "A distance / deplacement" : "Livraison"}
               </span>
             )}
           </div>
 
-          <div className="mt-8">
+          <div className={isServiceOffer ? "mt-8 rounded-2xl border border-white/70 bg-white p-5 shadow-sm" : "mt-8"}>
             <h3 className="mb-3 text-[1.05rem] font-semibold text-slate-950">Description</h3>
             <p className="text-[1rem] leading-8 text-slate-500 lg:text-[1.05rem]">
               {product.description}
@@ -591,8 +691,10 @@ export function ProductScreenNext() {
           </div>
 
           {product.returnConditions?.trim() && (
-            <div className="mt-8">
-              <h3 className="mb-3 text-[1.05rem] font-semibold text-slate-950">Retour</h3>
+            <div className={isServiceOffer ? "mt-6 rounded-2xl border border-white/70 bg-white p-5 shadow-sm" : "mt-8"}>
+              <h3 className="mb-3 text-[1.05rem] font-semibold text-slate-950">
+                {isServiceOffer ? "Conditions / délai" : "Retour"}
+              </h3>
               <p className="text-[1rem] leading-8 text-slate-500 whitespace-pre-line lg:text-[1.05rem]">
                 {product.returnConditions}
               </p>
@@ -624,51 +726,53 @@ export function ProductScreenNext() {
           <div className="mt-8 space-y-5 pb-8">
             <Button
               fullWidth
-              variant="outline"
+              variant={isServiceOffer ? "accent" : "outline"}
               size="lg"
-              disabled={isOutOfStock}
-              icon={added ? <Check className="w-5 h-5" /> : <ShoppingBag className="w-5 h-5" />}
+              disabled={!isServiceOffer && (isOutOfStock || isPurchaseBlocked)}
+              icon={
+                isServiceOffer
+                  ? <MessageCircle className="w-5 h-5" />
+                  : added
+                    ? <Check className="w-5 h-5" />
+                    : <ShoppingBag className="w-5 h-5" />
+              }
               className={`h-16 rounded-[1.7rem] border-white/70 text-[1.1rem] shadow-[0_10px_24px_rgba(15,23,42,0.06)] ${
-                added
+                isServiceOffer
+                  ? "bg-[#ee7f88] text-white hover:bg-[#ea6f7a]"
+                  : added
                   ? "bg-[#eef8e9] text-[#2e7d32]"
                   : "bg-white"
               }`}
-              onClick={() => handleAddToCart(false)}
-            >
-              {isOutOfStock ? "Rupture de stock" : added ? "Ajouté au panier" : "Ajouter au panier"}
-            </Button>
-            <Button
-              fullWidth
-              variant="outline"
-              size="lg"
-              icon={<MessageCircle className="w-5 h-5" />}
-              className="h-16 rounded-[1.7rem] border-white/70 bg-white text-[1.1rem] shadow-[0_10px_24px_rgba(15,23,42,0.06)]"
               onClick={() => {
-                const currentPath =
-                  typeof window !== "undefined"
-                    ? `${window.location.pathname}${window.location.search}`
-                    : getProductHref({
-                        id: product.id,
-                        shopSlug: product.shopSlug,
-                        shopName: product.shopName,
-                      });
-                const messageUrl = `/messages?shop=${encodeURIComponent(product.shopId)}&from=${encodeURIComponent(currentPath)}`;
-                trackLeadEvent({
-                  type: "click_message",
-                  actorUserId: user?.id,
-                  shopId: product.shopId,
-                  productId: product.id,
-                  metadata: { source: "product_screen" },
-                });
-                if (!user?.id || !accessToken) {
-                  push(`/auth?next=${encodeURIComponent(messageUrl)}`);
+                if (isServiceOffer) {
+                  handleOpenContact("quote");
                   return;
                 }
-                push(messageUrl);
+                handleAddToCart(false);
               }}
             >
-              Envoyer un message
+              {isServiceOffer
+                ? "Demander un devis"
+                : isPurchaseBlocked
+                  ? "Offre de votre entreprise"
+                  : isOutOfStock
+                    ? "Rupture de stock"
+                    : added
+                      ? "Ajouté au panier"
+                      : "Ajouter au panier"}
             </Button>
+            {!isServiceOffer && (
+              <Button
+                fullWidth
+                variant="outline"
+                size="lg"
+                icon={<MessageCircle className="w-5 h-5" />}
+                className="h-16 rounded-[1.7rem] border-white/70 bg-white text-[1.1rem] shadow-[0_10px_24px_rgba(15,23,42,0.06)]"
+                onClick={() => handleOpenContact("message")}
+              >
+                Envoyer un message
+              </Button>
+            )}
           </div>
         </section>
 
@@ -699,40 +803,58 @@ export function ProductScreenNext() {
       </div>
 
       <div className="lg:hidden fixed bottom-14 left-0 right-0 z-10 border-t border-black/6 bg-white/95 px-4 py-3 backdrop-blur">
-        <div className="flex items-center gap-3">
-          <div className="flex h-12 items-center rounded-full border border-black/10 bg-white px-2">
-            <button
-              type="button"
-              onClick={() => setQuantity((prev) => Math.max(1, prev - 1))}
-              className="flex h-8 w-8 items-center justify-center"
-            >
-              <Minus className="w-4 h-4" />
-            </button>
-            <span className="min-w-8 text-center">{quantity}</span>
-            <button
-              type="button"
-              onClick={() => setQuantity((prev) => Math.min(maxSelectableQuantity, prev + 1))}
-              disabled={isOutOfStock || quantity >= productStock}
-              className={`flex h-8 w-8 items-center justify-center ${
-                isOutOfStock || quantity >= productStock ? "text-slate-300" : ""
-              }`}
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
+        {isServiceOffer ? (
           <Button
             fullWidth
             size="lg"
-            disabled={isOutOfStock}
-            icon={added ? <Check className="w-5 h-5" /> : <ShoppingBag className="w-5 h-5" />}
-            className={`rounded-full ${
-              added ? "bg-[#2e7d32] hover:bg-[#276c2c]" : "bg-[#ee7f88] hover:bg-[#ea6f7a]"
-            }`}
-            onClick={() => handleAddToCart(false)}
+            icon={<MessageCircle className="w-5 h-5" />}
+            className="rounded-full bg-[#ee7f88] hover:bg-[#ea6f7a]"
+            onClick={() => handleOpenContact("quote")}
           >
-            {isOutOfStock ? "Rupture de stock" : added ? "Ajouté !" : "Ajouter au panier"}
+            Demander un devis
           </Button>
-        </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 items-center rounded-full border border-black/10 bg-white px-2">
+              <button
+                type="button"
+                onClick={() => setQuantity((prev) => Math.max(1, prev - 1))}
+                className="flex h-8 w-8 items-center justify-center"
+              >
+                <Minus className="w-4 h-4" />
+              </button>
+              <span className="min-w-8 text-center">{quantity}</span>
+              <button
+                type="button"
+                onClick={() => setQuantity((prev) => Math.min(maxSelectableQuantity, prev + 1))}
+                disabled={isOutOfStock || quantity >= productStock}
+                className={`flex h-8 w-8 items-center justify-center ${
+                  isOutOfStock || quantity >= productStock ? "text-slate-300" : ""
+                }`}
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+            <Button
+              fullWidth
+              size="lg"
+              disabled={isOutOfStock || isPurchaseBlocked}
+              icon={added ? <Check className="w-5 h-5" /> : <ShoppingBag className="w-5 h-5" />}
+              className={`rounded-full ${
+                added ? "bg-[#2e7d32] hover:bg-[#276c2c]" : "bg-[#ee7f88] hover:bg-[#ea6f7a]"
+              }`}
+              onClick={() => handleAddToCart(false)}
+            >
+              {isPurchaseBlocked
+                ? "Offre de votre entreprise"
+                : isOutOfStock
+                  ? "Rupture de stock"
+                  : added
+                    ? "Ajouté !"
+                    : "Ajouter au panier"}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

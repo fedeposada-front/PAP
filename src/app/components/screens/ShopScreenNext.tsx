@@ -64,10 +64,14 @@ export function ShopScreenNext() {
     return {
       id: shopSettings.id,
       slug: shopSettings.slug ?? toShopSlug(shopSettings.name),
+      businessType:
+        shopSettings.business_type === "service" || shopSettings.business_type === "hybrid"
+          ? shopSettings.business_type
+          : "product",
       name: shopSettings.name,
       category: shopSettings.category,
-      image: shopSettings.logo_image_url || "https://placehold.co/640x640?text=MonCadeauLocal",
-      bannerImage: shopSettings.banner_image_url || shopSettings.logo_image_url || "https://placehold.co/1280x640?text=MonCadeauLocal",
+      image: shopSettings.logo_image_url || "https://placehold.co/640x640?text=Lovcal",
+      bannerImage: shopSettings.banner_image_url || shopSettings.logo_image_url || "https://placehold.co/1280x640?text=Lovcal",
       rating: 0,
       reviewCount: 0,
       distance: shopSettings.city || "-",
@@ -280,7 +284,7 @@ export function ShopScreenNext() {
       const shareUrl = `${window.location.origin}${sharePath}`;
       const shareData = {
         title: shop.name,
-        text: `Découvre la boutique ${shop.name} sur MonCadeauLocal.`,
+        text: `Découvre la boutique ${shop.name} sur Lovcal.`,
         url: shareUrl,
       };
 
@@ -335,8 +339,9 @@ export function ShopScreenNext() {
     void run();
   };
 
-  // Fill with related products if too few
-  const displayProducts = shopProducts;
+  const productOffers = shopProducts.filter((product) => product.offerType !== "service");
+  const serviceOffers = shopProducts.filter((product) => product.offerType === "service");
+  const hasOffers = productOffers.length > 0 || serviceOffers.length > 0;
   const days = [
     { key: "lundi", label: "Lundi" },
     { key: "mardi", label: "Mardi" },
@@ -363,6 +368,26 @@ export function ShopScreenNext() {
     };
   });
   const hasDetailedSchedule = scheduleRows.some((row) => row.value !== "Fermé");
+
+  const renderOfferGrid = (offers: Product[]) => (
+    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+      {offers.map((product) => (
+        <ProductCard
+          key={product.id}
+          {...product}
+          onClick={() =>
+            push(
+              getProductHref({
+                id: product.id,
+                shopSlug: product.shopSlug ?? shop.slug,
+                shopName: product.shopName,
+              })
+            )
+          }
+        />
+      ))}
+    </div>
+  );
 
   return (
     <div className="min-h-screen flex flex-col bg-background pb-16">
@@ -572,28 +597,36 @@ export function ShopScreenNext() {
             </Button>
           </div>
 
-          {/* Products */}
+          {/* Offers */}
           <div className="px-4 lg:px-0 pb-24 lg:pb-6">
-            <div className="flex items-center justify-between mb-3">
-              <h3>Produits ({displayProducts.length})</h3>
-            </div>
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-              {displayProducts.map((product) => (
-                <ProductCard
-                  key={product.id}
-                  {...product}
-                  onClick={() =>
-                    push(
-                      getProductHref({
-                        id: product.id,
-                        shopSlug: product.shopSlug ?? shop.slug,
-                        shopName: product.shopName,
-                      })
-                    )
-                  }
-                />
-              ))}
-            </div>
+            {!hasOffers && (
+              <div className="rounded-2xl border border-border/50 bg-white p-4 text-sm text-muted-foreground shadow-sm">
+                Aucune offre disponible pour le moment.
+              </div>
+            )}
+
+            {productOffers.length > 0 && (
+              <section className={serviceOffers.length > 0 ? "mb-8" : ""}>
+                <div className="flex items-center justify-between mb-3">
+                  <h3>Produits ({productOffers.length})</h3>
+                </div>
+                {renderOfferGrid(productOffers)}
+              </section>
+            )}
+
+            {serviceOffers.length > 0 && (
+              <section>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3>Services ({serviceOffers.length})</h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Demandez un devis directement depuis la fiche service.
+                    </p>
+                  </div>
+                </div>
+                {renderOfferGrid(serviceOffers)}
+              </section>
+            )}
           </div>
         </div>
 

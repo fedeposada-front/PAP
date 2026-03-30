@@ -1,10 +1,13 @@
+import type { BusinessType } from "../types/catalog";
 import { CATEGORY_SUBCATEGORIES } from "../data/catalog";
 import type { ShopTeamMember } from "../types/catalog";
+import { fetchManagedShopAccess } from "./shopAccess";
 import { toShopSlug } from "../utils/shopRouting";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const DEFAULT_SHOP_CATEGORY_ID = "artisanat";
+const GEOCODE_TIMEOUT_MS = 4000;
 const CATEGORY_ID_SET = new Set(CATEGORY_SUBCATEGORIES.map((category) => category.id));
 const CATEGORY_ID_BY_LABEL = new Map(
   CATEGORY_SUBCATEGORIES.map((category) => [category.label.toLowerCase(), category.id] as const)
@@ -13,6 +16,8 @@ const CATEGORY_ID_BY_LABEL = new Map(
 interface ShopSettingsRow {
   id: string;
   slug?: string | null;
+  business_type?: string | null;
+  business_type_configured?: boolean | null;
   name: string;
   category: string;
   description: string | null;
@@ -60,10 +65,14 @@ interface OwnedShopLookupRow {
 }
 
 const SHOP_SETTINGS_SELECT =
-  "id,slug,name,category,description,story,team_members,address,city,postal_code,phone,email,website,hours,opening_hours,open_holidays,delivery,pickup_today,delivery_hand,delivery_post,delivery_carrier,logo_image_url,banner_image_url,is_published,lat,lng";
+  "id,slug,business_type,business_type_configured,name,category,description,story,team_members,address,city,postal_code,phone,email,website,hours,opening_hours,open_holidays,delivery,pickup_today,delivery_hand,delivery_post,delivery_carrier,logo_image_url,banner_image_url,is_published,lat,lng";
 
 const SHOP_SETTINGS_FALLBACK_SELECT =
   "id,name,category,description,address,city,postal_code,phone,hours,delivery,pickup_today,is_published,lat,lng";
+
+function normalizeBusinessType(value: string | null | undefined): BusinessType {
+  return value === "service" || value === "hybrid" ? value : "product";
+}
 
 function normalizeTeamMembers(value: unknown): ShopTeamMember[] {
   if (!Array.isArray(value)) return [];
@@ -103,6 +112,8 @@ function mapShopSettingsRow(row: ShopSettingsRow): ShopSettingsData {
   return {
     ...row,
     slug: row.slug?.trim() || toShopSlug(row.name),
+    business_type: normalizeBusinessType(row.business_type),
+    business_type_configured: Boolean(row.business_type_configured),
     teamMembers: normalizeTeamMembers(row.team_members),
   };
 }
@@ -113,6 +124,8 @@ function mapFallbackShopSettingsRow(
   return {
     id: row.id,
     slug: toShopSlug(row.name),
+    business_type: "product",
+    business_type_configured: true,
     name: row.name,
     category: row.category,
     description: row.description ?? "",
@@ -178,8 +191,14 @@ async function geocodeShopAddress(params: {
   if (params.city?.trim()) query.set("city", params.city.trim());
   if (params.postalCode?.trim()) query.set("postcode", params.postalCode.trim());
 
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeoutId: ReturnType<typeof setTimeout> | null = controller
+    ? setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS)
+    : null;
   try {
-    const response = await fetch(`https://api-adresse.data.gouv.fr/search/?${query.toString()}`);
+    const response = await fetch(`https://api-adresse.data.gouv.fr/search/?${query.toString()}`, {
+      signal: controller?.signal,
+    });
     if (!response.ok) return null;
     const payload = (await response.json()) as { features?: AddressFeature[] };
     const coords = payload.features?.[0]?.geometry?.coordinates;
@@ -189,6 +208,8 @@ async function geocodeShopAddress(params: {
     return { lat, lng };
   } catch {
     return null;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
@@ -306,9 +327,9 @@ export async function backfillSellerShopCoordinatesIfMissing(userId: string, acc
 }
 
 async function getOrCreateShop(userId: string, accessToken: string): Promise<ShopSettingsData> {
-  const existingLookup = await fetchOwnedShopLookup(userId, accessToken);
-  if (existingLookup?.id) {
-    const existingShop = await fetchShopSettingsById(existingLookup.id, accessToken);
+  const existingAccess = await fetchManagedShopAccess({ userId, accessToken });
+  if (existingAccess?.shopId) {
+    const existingShop = await fetchShopSettingsById(existingAccess.shopId, accessToken);
     if (existingShop) return existingShop;
   }
 
@@ -342,11 +363,6 @@ async function getOrCreateShop(userId: string, accessToken: string): Promise<Sho
   }
 
   const initialAddress = profile?.shop_address?.trim() || "";
-  const coords = await geocodeShopAddress({
-    address: initialAddress,
-    city: "Amiens",
-  });
-
   const inserted = await requestSupabase<ShopSettingsRow[]>(
     "shops",
     {
@@ -362,8 +378,8 @@ async function getOrCreateShop(userId: string, accessToken: string): Promise<Sho
         team_members: [],
         address: initialAddress || "Adresse a renseigner",
         city: "Amiens",
-        lat: coords?.lat ?? null,
-        lng: coords?.lng ?? null,
+        lat: null,
+        lng: null,
         is_published: false,
       }]),
     },
@@ -373,12 +389,54 @@ async function getOrCreateShop(userId: string, accessToken: string): Promise<Sho
   if (!inserted[0]) {
     throw new Error("Impossible de creer la boutique.");
   }
-  return mapShopSettingsRow(inserted[0]);
+  const createdShop = mapShopSettingsRow(inserted[0]);
+  if (initialAddress) {
+    void ensureShopCoordinates(createdShop, accessToken).catch(() => {
+      // Do not block initial shop creation on geocoding failures.
+    });
+  }
+  return createdShop;
 }
 
 export async function fetchShopSettings(userId: string, accessToken: string) {
   if (!hasSupabaseConfig()) return null;
+  const access = await fetchManagedShopAccess({ userId, accessToken });
+  if (access?.shopId) {
+    const existingShop = await fetchShopSettingsById(access.shopId, accessToken);
+    if (existingShop) return existingShop;
+  }
   return getOrCreateShop(userId, accessToken);
+}
+
+export async function saveShopBusinessType(params: {
+  userId: string;
+  accessToken: string;
+  businessType: BusinessType;
+}): Promise<ShopSettingsData> {
+  if (!hasSupabaseConfig()) {
+    throw new Error("Configuration Supabase manquante.");
+  }
+
+  const shop = await getOrCreateShop(params.userId, params.accessToken);
+
+  await requestSupabase(
+    `shops?id=eq.${shop.id}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        business_type: params.businessType,
+        business_type_configured: true,
+      }),
+    },
+    params.accessToken
+  );
+
+  const refreshed = await fetchShopSettingsById(shop.id, params.accessToken);
+  if (!refreshed) {
+    throw new Error("Le choix d'activité a été sauvegardé, mais la relecture a échoué.");
+  }
+  return refreshed;
 }
 
 export async function saveShopSettings(params: {
@@ -496,4 +554,67 @@ export async function saveShopTeamMembers(params: {
     },
     params.accessToken
   );
+}
+
+export async function saveShopStorefrontSettingsViaApi(params: {
+  accessToken: string;
+  shopName: string;
+  shopCategory: string;
+  shopDesc: string;
+  shopStory: string;
+  shopAddress: string;
+  shopCity: string;
+  shopPostal: string;
+  shopPhone: string;
+  shopEmail: string;
+  shopWebsite: string;
+  schedule: Record<string, unknown>;
+  openHolidays: boolean;
+  pickup: boolean;
+  delivery: boolean;
+  deliveryHand: boolean;
+  deliveryPost: boolean;
+  deliveryCarrier: boolean;
+  logoImage: string | null;
+  bannerImage: string | null;
+  isPublished: boolean;
+}) {
+  const response = await fetch("/api/shop-settings/storefront", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${params.accessToken}`,
+    },
+    body: JSON.stringify({
+      shopName: params.shopName,
+      shopCategory: params.shopCategory,
+      shopDesc: params.shopDesc,
+      shopStory: params.shopStory,
+      shopAddress: params.shopAddress,
+      shopCity: params.shopCity,
+      shopPostal: params.shopPostal,
+      shopPhone: params.shopPhone,
+      shopEmail: params.shopEmail,
+      shopWebsite: params.shopWebsite,
+      schedule: params.schedule,
+      openHolidays: params.openHolidays,
+      pickup: params.pickup,
+      delivery: params.delivery,
+      deliveryHand: params.deliveryHand,
+      deliveryPost: params.deliveryPost,
+      deliveryCarrier: params.deliveryCarrier,
+      logoImage: params.logoImage,
+      bannerImage: params.bannerImage,
+      isPublished: params.isPublished,
+    }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as {
+    ok?: boolean;
+    message?: string;
+  } | null;
+
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.message || "Impossible d'enregistrer la vitrine.");
+  }
 }

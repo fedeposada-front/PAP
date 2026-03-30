@@ -13,6 +13,8 @@ interface AuthProfileRow {
   id: string;
   first_name: string | null;
   last_name: string | null;
+  nickname: string | null;
+  city: string | null;
   roles: Role[] | null;
   active_role: Role | null;
   shop_name: string | null;
@@ -28,6 +30,8 @@ export interface User {
   id: string;
   firstName: string;
   lastName: string;
+  nickname?: string;
+  city?: string;
   email: string;
   avatarUrl?: string;
   role: Role;
@@ -64,7 +68,7 @@ interface AuthContextType {
     sellerAttested?: boolean;
   }) => Promise<void>;
   updateSellerStatus: (data: { vacationMode: boolean; deactivated: boolean }) => Promise<void>;
-  updateProfile: (data: { firstName: string; lastName: string }) => Promise<void>;
+  updateProfile: (data: { firstName: string; lastName: string; nickname?: string; city?: string }) => Promise<void>;
   updateEmail: (email: string) => Promise<void>;
   requestPasswordReset: (email: string) => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
@@ -232,8 +236,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     let profile: AuthProfileRow | null = null;
     try {
-      const profileRows = await requestJson<AuthProfileRow[]>(
-        `${SUPABASE_URL}/rest/v1/profiles?id=eq.${authUser.id}&select=id,first_name,last_name,roles,active_role,shop_name,shop_address,siret_number,siret_verified,seller_attested,seller_vacation_mode,seller_deactivated`,
+        const profileRows = await requestJson<AuthProfileRow[]>(
+        `${SUPABASE_URL}/rest/v1/profiles?id=eq.${authUser.id}&select=id,first_name,last_name,nickname,city,roles,active_role,shop_name,shop_address,siret_number,siret_verified,seller_attested,seller_vacation_mode,seller_deactivated`,
         { method: "GET" },
         { requiresAuth: true, accessToken }
       );
@@ -253,6 +257,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       id: authUser.id,
       first_name: profile?.first_name ?? authUser.user_metadata?.first_name ?? null,
       last_name: profile?.last_name ?? authUser.user_metadata?.last_name ?? null,
+      nickname: profile?.nickname ?? authUser.user_metadata?.first_name ?? null,
+      city: profile?.city ?? null,
       roles,
       active_role: role,
       shop_name: profile?.shop_name ?? null,
@@ -285,6 +291,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: authUser.email,
       firstName: profilePayload.first_name ?? "",
       lastName: profilePayload.last_name ?? "",
+      nickname: profilePayload.nickname ?? undefined,
+      city: profilePayload.city ?? undefined,
       avatarUrl: authUser.user_metadata?.avatar_url ?? authUser.user_metadata?.picture ?? undefined,
       roles,
       role,
@@ -447,6 +455,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             id: signup.user?.id,
             first_name: firstName,
             last_name: lastName,
+            nickname: firstName,
+            city: null,
             roles: preferredRole === "seller" ? ["buyer", "seller"] : ["buyer"],
             active_role: preferredRole,
             shop_name: preferredRole === "seller" ? (shopName || null) : null,
@@ -580,7 +590,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
-  const updateProfile: AuthContextType["updateProfile"] = async ({ firstName, lastName }) => {
+  const updateProfile: AuthContextType["updateProfile"] = async ({ firstName, lastName, nickname, city }) => {
     if (!user) {
       throw new Error("Session invalide.");
     }
@@ -597,6 +607,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             id: user.id,
             first_name: firstName || null,
             last_name: lastName || null,
+            nickname: nickname?.trim() || null,
+            city: city?.trim() || null,
           }]),
         },
         { requiresAuth: true, accessToken }
@@ -609,6 +621,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             ...prev,
             firstName,
             lastName,
+            nickname: nickname?.trim() || undefined,
+            city: city?.trim() || undefined,
           }
         : prev
     );

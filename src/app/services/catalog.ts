@@ -1,14 +1,15 @@
-import type { Product, Shop, ShopTeamMember } from "../types/catalog";
+import type { BusinessType, OfferType, Product, Shop, ShopTeamMember } from "../types/catalog";
 import { toShopSlug } from "../utils/shopRouting";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-const FALLBACK_IMAGE = "https://placehold.co/640x640?text=MonCadeauLocal";
+const FALLBACK_IMAGE = "https://placehold.co/640x640?text=Lovcal";
 type OpeningHours = Record<string, { open?: boolean; openTime?: string; closeTime?: string }>;
 
 interface ShopRow {
   id: string;
   slug?: string | null;
+  business_type?: string | null;
   name: string;
   category: string;
   description: string | null;
@@ -61,10 +62,15 @@ function resolveShopSlug(slug: string | null | undefined, name: string) {
   return slug?.trim() || toShopSlug(name);
 }
 
+function normalizeBusinessType(value: string | null | undefined): BusinessType {
+  return value === "service" || value === "hybrid" ? value : "product";
+}
+
 interface ProductRow {
   id: string;
   shop_id: string;
   collection_id?: string | null;
+  offer_type?: string | null;
   title: string;
   description: string | null;
   features: string | null;
@@ -83,6 +89,10 @@ interface ProductRow {
   pickup: boolean;
   delivery: boolean;
   created_at: string;
+}
+
+function normalizeOfferType(value: string | null | undefined): OfferType {
+  return value === "service" ? "service" : "product";
 }
 
 function hasSupabaseConfig() {
@@ -175,6 +185,7 @@ function mapShop(row: ShopRow): Shop {
   return {
     id: row.id,
     slug: resolveShopSlug(row.slug, row.name),
+    businessType: normalizeBusinessType(row.business_type),
     name: row.name,
     postalCode: row.postal_code ?? undefined,
     category: row.category?.trim() || "Non catégorisé",
@@ -206,6 +217,7 @@ function mapProduct(row: ProductRow, shopName: string, shopSlug?: string | null)
     id: row.id,
     shopId: row.shop_id,
     collectionId: row.collection_id ?? undefined,
+    offerType: normalizeOfferType(row.offer_type),
     shopName,
     shopSlug: resolveShopSlug(shopSlug, shopName),
     title: row.title,
@@ -252,11 +264,11 @@ export async function fetchShops(): Promise<Shop[]> {
   let rows: ShopRow[];
   try {
     rows = await requestSupabase<ShopRow[]>(
-      "shops?select=id,slug,name,category,description,story,team_members,address,city,postal_code,phone,is_open,pickup_today,open_sunday,delivery,hours,opening_hours,rating,review_count,lat,lng,is_published,logo_image_url,banner_image_url&is_published=eq.true&order=created_at.desc"
+      "shops?select=id,slug,business_type,name,category,description,story,team_members,address,city,postal_code,phone,is_open,pickup_today,open_sunday,delivery,hours,opening_hours,rating,review_count,lat,lng,is_published,logo_image_url,banner_image_url&is_published=eq.true&order=created_at.desc"
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    if (!isSchemaColumnError(message, ["slug", "story", "team_members", "opening_hours", "logo_image_url", "banner_image_url"])) {
+    if (!isSchemaColumnError(message, ["slug", "business_type", "story", "team_members", "opening_hours", "logo_image_url", "banner_image_url"])) {
       throw error;
     }
     rows = await requestSupabase<ShopRow[]>(
@@ -274,11 +286,11 @@ export async function fetchShopById(shopId: string): Promise<Shop | null> {
     let rows: ShopRow[];
     try {
       rows = await requestSupabase<ShopRow[]>(
-        `shops?select=id,slug,name,category,description,story,team_members,address,city,postal_code,phone,is_open,pickup_today,open_sunday,delivery,hours,opening_hours,rating,review_count,lat,lng,is_published,logo_image_url,banner_image_url&id=eq.${shopId}&is_published=eq.true&limit=1`
+        `shops?select=id,slug,business_type,name,category,description,story,team_members,address,city,postal_code,phone,is_open,pickup_today,open_sunday,delivery,hours,opening_hours,rating,review_count,lat,lng,is_published,logo_image_url,banner_image_url&id=eq.${shopId}&is_published=eq.true&limit=1`
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (!isSchemaColumnError(message, ["slug", "story", "team_members", "opening_hours", "logo_image_url", "banner_image_url"])) {
+      if (!isSchemaColumnError(message, ["slug", "business_type", "story", "team_members", "opening_hours", "logo_image_url", "banner_image_url"])) {
         throw error;
       }
       rows = await requestSupabase<ShopRow[]>(
@@ -302,10 +314,11 @@ export async function fetchShopCollectionTitle(collectionId: string): Promise<st
   return rows[0]?.title?.trim() || null;
 }
 
-function buildProductsQuery(options?: { limit?: number; lightweight?: boolean }) {
+function buildProductsQuery(options?: { limit?: number; lightweight?: boolean; includeOfferType?: boolean }) {
+  const offerType = options?.includeOfferType === false ? "" : "offer_type,";
   const select = options?.lightweight
-    ? "id,shop_id,collection_id,title,description,price,image_url,main_image_url,image_urls,category,categories,available_today,stock,pickup,delivery,created_at"
-    : "id,shop_id,collection_id,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at";
+    ? `id,shop_id,collection_id,${offerType}title,description,price,image_url,main_image_url,image_urls,category,categories,available_today,stock,pickup,delivery,created_at`
+    : `id,shop_id,collection_id,${offerType}title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at`;
   const limit = options?.limit ? `&limit=${options.limit}` : "";
   return `products?select=${select}&is_published=eq.true&order=created_at.desc${limit}`;
 }
@@ -326,16 +339,16 @@ export async function fetchProducts(options?: { limit?: number; lightweight?: bo
     if (isStatementTimeoutError(message)) {
       [productRows, shopRows] = await Promise.all([
         requestSupabase<ProductRow[]>(
-          buildProductsQuery({ limit: options?.limit ?? 60, lightweight: true })
+          buildProductsQuery({ limit: options?.limit ?? 60, lightweight: true, includeOfferType: false })
         ),
         shopRowsPromise,
       ]);
-    } else if (!isSchemaColumnError(message, ["features", "composition", "return_conditions", "color", "colors", "main_image_url", "image_urls", "categories"])) {
+    } else if (!isSchemaColumnError(message, ["offer_type", "features", "composition", "return_conditions", "color", "colors", "main_image_url", "image_urls", "categories"])) {
       throw error;
     } else {
       [productRows, shopRows] = await Promise.all([
         requestSupabase<ProductRow[]>(
-          buildProductsQuery({ limit: options?.limit, lightweight: true })
+          buildProductsQuery({ limit: options?.limit, lightweight: true, includeOfferType: false })
         ),
         shopRowsPromise,
       ]);
@@ -361,12 +374,13 @@ export async function fetchProductsByShopId(shopId: string): Promise<Product[]> 
     let productRows: ProductRow[];
     try {
       productRows = await requestSupabase<ProductRow[]>(
-        `products?select=id,shop_id,collection_id,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at&shop_id=eq.${shopId}&is_published=eq.true&order=created_at.desc`
+        `products?select=id,shop_id,collection_id,offer_type,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at&shop_id=eq.${shopId}&is_published=eq.true&order=created_at.desc`
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (
         !isSchemaColumnError(message, [
+          "offer_type",
           "features",
           "composition",
           "return_conditions",
@@ -400,12 +414,13 @@ export async function fetchProductById(productId: string): Promise<Product | nul
     let productRows: ProductRow[];
     try {
       productRows = await requestSupabase<ProductRow[]>(
-        `products?select=id,shop_id,collection_id,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at&id=eq.${productId}&is_published=eq.true&limit=1`
+        `products?select=id,shop_id,collection_id,offer_type,title,description,features,composition,return_conditions,color,colors,price,image_url,main_image_url,image_urls,categories,category,available_today,stock,pickup,delivery,created_at&id=eq.${productId}&is_published=eq.true&limit=1`
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (
         !isSchemaColumnError(message, [
+          "offer_type",
           "features",
           "composition",
           "return_conditions",

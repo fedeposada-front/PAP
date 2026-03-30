@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   MapPin,
@@ -21,6 +21,7 @@ import {
   type DraftOrderAmounts,
   type DraftOrderBundle,
 } from "../../services/orders";
+import { fetchInternalShopIds } from "../../services/shopAccess";
 import type { OrderPaymentPolicy } from "../../types/orders";
 
 const BUYER_FEE_RATE = 0.02;
@@ -67,6 +68,7 @@ export function CheckoutScreenNext() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createdOrders, setCreatedOrders] = useState<DraftOrderBundle[]>([]);
   const [confirmedItems, setConfirmedItems] = useState<CartItem[]>([]);
+  const [internalShopIds, setInternalShopIds] = useState<string[]>([]);
   const [pickupPaymentPolicies, setPickupPaymentPolicies] = useState<
     Record<string, OrderPaymentPolicy>
   >({});
@@ -81,6 +83,38 @@ export function CheckoutScreenNext() {
 
   const hasDeliveryItems = items.some((item) => item.mode === "delivery");
   const hasStockIssues = items.some((item) => item.qty > Math.max(0, item.product.stock));
+  const hasInternalOffers = items.some((item) => internalShopIds.includes(item.product.shopId));
+
+  useEffect(() => {
+    if (!user?.id || !accessToken || items.length === 0) {
+      setInternalShopIds([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const nextInternalShopIds = await fetchInternalShopIds({
+          shopIds: items.map((item) => item.product.shopId),
+          userId: user.id,
+          accessToken,
+        });
+        if (!cancelled) {
+          setInternalShopIds(nextInternalShopIds);
+        }
+      } catch {
+        if (!cancelled) {
+          setInternalShopIds([]);
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [items, user?.id, accessToken]);
 
   const baseGroupsByKey = new Map<
     string,
@@ -170,6 +204,13 @@ export function CheckoutScreenNext() {
     if (hasStockIssues) {
       setCheckoutError(
         "Certaines quantités dépassent le stock disponible. Retournez au panier pour corriger."
+      );
+      return;
+    }
+
+    if (hasInternalOffers) {
+      setCheckoutError(
+        "Vous ne pouvez pas commander une offre publiée par votre entreprise. Retirez-la du panier."
       );
       return;
     }
@@ -442,9 +483,11 @@ export function CheckoutScreenNext() {
 
       <div className="flex-1 lg:max-w-4xl lg:mx-auto lg:w-full lg:flex lg:gap-8 lg:py-6 lg:px-8">
         <div className="flex-1 px-4 lg:px-0 py-4 space-y-4">
-          {checkoutError && (
+          {(hasInternalOffers || checkoutError) && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              {checkoutError}
+              {hasInternalOffers
+                ? "Vous ne pouvez pas commander une offre publiée par votre entreprise. Retirez-la du panier."
+                : checkoutError}
             </div>
           )}
           {/* Order summary */}
@@ -673,12 +716,14 @@ export function CheckoutScreenNext() {
               fullWidth
               size="lg"
               className="mt-5"
-              disabled={hasStockIssues || isLoading || isSubmitting}
+              disabled={hasStockIssues || hasInternalOffers || isLoading || isSubmitting}
               onClick={handleConfirm}
             >
               {isSubmitting
                 ? "Création de la commande..."
-                : `Créer la commande · ${payNowTotal.toFixed(2)} €`}
+                : hasInternalOffers
+                  ? "Retirez vos propres offres"
+                  : `Créer la commande · ${payNowTotal.toFixed(2)} €`}
             </Button>
             <div className="flex items-center justify-center gap-2 mt-3 text-xs text-muted-foreground">
               <Shield className="w-3.5 h-3.5" />
@@ -713,13 +758,15 @@ export function CheckoutScreenNext() {
         <Button
           fullWidth
           size="lg"
-          disabled={hasStockIssues || isLoading || isSubmitting}
+          disabled={hasStockIssues || hasInternalOffers || isLoading || isSubmitting}
           onClick={handleConfirm}
         >
           <Shield className="w-4 h-4" />
           {isSubmitting
             ? "Création de la commande..."
-            : `Créer la commande · ${payNowTotal.toFixed(2)} €`}
+            : hasInternalOffers
+              ? "Retirez vos propres offres"
+              : `Créer la commande · ${payNowTotal.toFixed(2)} €`}
         </Button>
       </div>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   X,
@@ -22,12 +22,15 @@ import {
   type SellerShopCollection,
   updateSellerProduct,
 } from "../../services/sellerProducts";
+import { fetchShopSettings } from "../../services/shopSettings";
+import { fetchManagedShopAccess } from "../../services/shopAccess";
+import type { BusinessType, OfferType } from "../../types/catalog";
 
 export function AddProductScreenNext() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const push = (path: string) => router.push(path);
-  const { user, isAuthenticated, accessToken } = useAuth();
+  const push = useCallback((path: string) => router.push(path), [router]);
+  const { user, isAuthenticated, accessToken, switchRole } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const collectionImageInputRef = useRef<HTMLInputElement>(null);
   const [saveResult, setSaveResult] = useState<"published" | "draft" | null>(null);
@@ -54,6 +57,12 @@ export function AddProductScreenNext() {
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isPublishing, setIsPublishing] = useState(false);
   const [loadedProductKey, setLoadedProductKey] = useState<string | null>(null);
+  const [businessTypeConfigured, setBusinessTypeConfigured] = useState<boolean | null>(null);
+  const [canManageCatalog, setCanManageCatalog] = useState<boolean | null>(null);
+  const [businessType, setBusinessType] = useState<BusinessType | null>(null);
+  const [offerType, setOfferType] = useState<OfferType>("product");
+  const [accessResolved, setAccessResolved] = useState(false);
+  const [accessMessage, setAccessMessage] = useState<string | null>(null);
 
   const maxPhotos = 5;
   const editProductId = searchParams.get("edit")?.trim() || "";
@@ -62,6 +71,28 @@ export function AddProductScreenNext() {
   const isEditMode = Boolean(editProductId);
   const isDuplicateMode = Boolean(!editProductId && duplicateProductId);
   const sourceProductKey = sourceProductId ? `${isEditMode ? "edit" : "duplicate"}:${sourceProductId}` : "";
+  const isServiceOffer = offerType === "service";
+  const canChooseOfferType = businessType === "hybrid";
+  const offerLabel = isServiceOffer ? "service" : "produit";
+  const offerLabelCapitalized = isServiceOffer ? "Service" : "Produit";
+  const pageTitle = isEditMode
+    ? `Modifier ${isServiceOffer ? "le service" : "le produit"}`
+    : isDuplicateMode
+      ? `Copier ${isServiceOffer ? "le service" : "le produit"}`
+      : canChooseOfferType
+        ? "Ajouter une offre"
+        : `Ajouter ${isServiceOffer ? "un service" : "un produit"}`;
+
+  useEffect(() => {
+    if (sourceProductId) return;
+    if (businessType === "service") {
+      setOfferType("service");
+      return;
+    }
+    if (businessType === "product") {
+      setOfferType("product");
+    }
+  }, [businessType, sourceProductId]);
 
   const handlePhotoFiles = (fileList: FileList | null) => {
     if (!fileList) return;
@@ -138,14 +169,24 @@ export function AddProductScreenNext() {
 
     if (target === "published") {
       if (photos.length < 1) errors.push("Ajoutez au moins 1 photo.");
-      if (title.trim().length < 3) errors.push("Le titre doit contenir au moins 3 caracteres.");
+      if (title.trim().length < 3) errors.push(`Le titre du ${offerLabel} doit contenir au moins 3 caracteres.`);
       if (description.trim().length < 20) errors.push("La description doit contenir au moins 20 caracteres.");
-      if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) errors.push("Le prix doit etre superieur a 0.");
-      if (!Number.isInteger(parsedStock) || parsedStock < 1) errors.push("Le stock doit etre un entier superieur ou egal a 1.");
+      if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+        errors.push(`Le ${isServiceOffer ? "tarif" : "prix"} doit etre superieur a 0.`);
+      }
+      if (!isServiceOffer && (!Number.isInteger(parsedStock) || parsedStock < 1)) {
+        errors.push(`${isServiceOffer ? "Les disponibilites" : "Le stock"} doivent etre un entier superieur ou egal a 1.`);
+      }
       if (categories.length < 1) errors.push("Selectionnez au moins 1 categorie.");
-      if (!pickup && !delivery) errors.push("Activez au moins un mode de remise (retrait ou livraison).");
+      if (!pickup && !delivery) {
+        errors.push(
+          isServiceOffer
+            ? "Activez au moins un mode de prestation (sur place ou a distance)."
+            : "Activez au moins un mode de remise (retrait ou livraison)."
+        );
+      }
     } else {
-      if (!title.trim()) errors.push("Ajoutez au moins un titre pour le brouillon.");
+      if (!title.trim()) errors.push(`Ajoutez au moins un titre pour le brouillon du ${offerLabel}.`);
     }
 
     setValidationErrors(errors);
@@ -157,13 +198,93 @@ export function AddProductScreenNext() {
       push("/auth?role=seller");
       return;
     }
-    if (user?.role !== "seller" || !user?.siretVerified) {
-      push("/siret");
-    }
-  }, [isAuthenticated, user, push]);
+    if (user?.role === "seller") return;
+
+    const run = async () => {
+      if (user?.roles.includes("seller")) {
+        await switchRole("seller");
+        return;
+      }
+      push("/auth?role=seller");
+    };
+
+    void run();
+  }, [isAuthenticated, user?.role, user?.roles, push, switchRole]);
 
   useEffect(() => {
-    if (!user?.id || !accessToken || !user?.siretVerified) {
+    if (!user?.id || !accessToken || user.role !== "seller") {
+      setBusinessTypeConfigured(null);
+      setCanManageCatalog(null);
+      setBusinessType(null);
+      setAccessResolved(false);
+      setAccessMessage(null);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      if (!cancelled) {
+        setAccessResolved(false);
+        setAccessMessage(null);
+      }
+      try {
+        const access = await fetchManagedShopAccess({
+          userId: user.id,
+          accessToken,
+        });
+        if (!access && !user.siretVerified) {
+          if (!cancelled) {
+            setCanManageCatalog(false);
+            setAccessResolved(true);
+            push("/siret");
+          }
+          return;
+        }
+        if (access && !access.canManageCatalog) {
+          if (!cancelled) {
+            setCanManageCatalog(false);
+            setAccessResolved(true);
+            setAccessMessage("Votre rôle actuel ne permet pas d'ajouter ou modifier des offres.");
+            push("/dashboard");
+          }
+          return;
+        }
+
+        const shop = await fetchShopSettings(user.id, accessToken);
+        if (cancelled) return;
+        const isConfigured = access?.isOwner ? Boolean(shop?.business_type_configured) : true;
+        const nextBusinessType: BusinessType =
+          shop?.business_type === "service" || shop?.business_type === "hybrid"
+            ? shop.business_type
+            : "product";
+        setCanManageCatalog(Boolean(access?.canManageCatalog ?? true));
+        setBusinessTypeConfigured(isConfigured);
+        setBusinessType(nextBusinessType);
+        if (!isConfigured) {
+          push("/onboarding?next=/add-product");
+        }
+      } catch {
+        if (!cancelled) {
+          setBusinessTypeConfigured(false);
+          setCanManageCatalog(false);
+          setBusinessType(null);
+          setAccessMessage("Impossible de charger la configuration de cette entreprise.");
+        }
+      } finally {
+        if (!cancelled) {
+          setAccessResolved(true);
+        }
+      }
+    };
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.role, user?.siretVerified, accessToken, push]);
+
+  useEffect(() => {
+    if (!user?.id || !accessToken || canManageCatalog !== true) {
       setCollections([]);
       return;
     }
@@ -184,10 +305,10 @@ export function AddProductScreenNext() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id, user?.siretVerified, accessToken]);
+  }, [user?.id, accessToken, canManageCatalog]);
 
   useEffect(() => {
-    if (!user?.id || !accessToken || !sourceProductId) {
+    if (!user?.id || !accessToken || canManageCatalog !== true || !sourceProductId) {
       setLoadedProductKey(null);
       return;
     }
@@ -205,13 +326,14 @@ export function AddProductScreenNext() {
         const sourceProduct = sellerProducts.find((product) => product.id === sourceProductId);
         if (!sourceProduct) {
           if (!cancelled) {
-            setValidationErrors(["Produit introuvable pour cette action."]);
+            setValidationErrors(["Offre introuvable pour cette action."]);
           }
           return;
         }
         if (cancelled) return;
 
         setTitle(isDuplicateMode ? `${sourceProduct.title} (copie)` : sourceProduct.title);
+        setOfferType(sourceProduct.offerType ?? "product");
         setDescription(sourceProduct.description ?? "");
         setFeatures(sourceProduct.features ?? "");
         setComposition(sourceProduct.composition ?? "");
@@ -241,7 +363,7 @@ export function AddProductScreenNext() {
         setLoadedProductKey(sourceProductKey);
       } catch (error) {
         if (!cancelled) {
-          setValidationErrors([error instanceof Error ? error.message : "Impossible de charger le produit."]);
+          setValidationErrors([error instanceof Error ? error.message : "Impossible de charger l'offre."]);
         }
       }
     };
@@ -249,9 +371,70 @@ export function AddProductScreenNext() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id, accessToken, sourceProductId, sourceProductKey, isDuplicateMode, loadedProductKey]);
+  }, [user?.id, accessToken, sourceProductId, sourceProductKey, isDuplicateMode, loadedProductKey, canManageCatalog]);
 
-  if (!isAuthenticated || user?.role !== "seller" || !user?.siretVerified) {
+  if (!isAuthenticated || user?.role !== "seller" || !accessResolved) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background px-6">
+        <div className="w-full max-w-md rounded-3xl border border-border bg-white p-6 text-center shadow-sm">
+          <h3>Chargement de l'offre</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Nous préparons votre espace catalogue.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (accessMessage && canManageCatalog !== true) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background px-6">
+        <div className="w-full max-w-md rounded-3xl border border-border bg-white p-6 text-center shadow-sm">
+          <h3>Accès catalogue indisponible</h3>
+          <p className="mt-2 text-sm text-muted-foreground">{accessMessage}</p>
+          <div className="mt-5 flex flex-col gap-3">
+            <Button fullWidth variant="accent" onClick={() => push("/dashboard")}>
+              Retour au tableau de bord
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (businessTypeConfigured === false || businessTypeConfigured === null || canManageCatalog !== true) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background px-6">
+        <div className="w-full max-w-md rounded-3xl border border-border bg-white p-6 text-center shadow-sm">
+          <h3>Configuration d'activité requise</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Choisissez d&apos;abord si votre entreprise propose des produits, des services, ou les deux.
+          </p>
+          <div className="mt-5 flex flex-col gap-3">
+            <Button fullWidth variant="accent" onClick={() => push("/onboarding?next=/add-product")}>
+              Configurer mon activité
+            </Button>
+            <Button fullWidth variant="outline" onClick={() => push("/dashboard")}>
+              Retour au tableau de bord
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const businessTypeLabel =
+    businessType === "service"
+      ? "Services"
+      : businessType === "hybrid"
+        ? "Produits et services"
+        : "Produits";
+
+  if (
+    !isAuthenticated ||
+    user?.role !== "seller" ||
+    canManageCatalog !== true
+  ) {
     return null;
   }
 
@@ -268,14 +451,24 @@ export function AddProductScreenNext() {
         >
           <Check className="w-10 h-10 text-green" />
         </motion.div>
-        <h1 className="mb-2">{saveResult === "published" ? "Produit publié !" : "Brouillon enregistré !"}</h1>
+        <h1 className="mb-2">{saveResult === "published" ? `${offerLabelCapitalized} publie !` : "Brouillon enregistre !"}</h1>
         <p className="text-muted-foreground text-center text-sm mb-8 max-w-sm">
           {saveResult === "published"
-            ? "Votre produit est publié. Il sera visible quand la boutique sera elle aussi publiée."
-            : "Votre produit est enregistré en brouillon. Il ne sera pas visible tant qu'il n'est pas publié."}
+            ? `Votre ${offerLabel} est publie. Il sera visible quand l'entreprise sera elle aussi publiee.`
+            : `Votre ${offerLabel} est enregistre en brouillon. Il ne sera pas visible tant qu'il n'est pas publie.`}
         </p>
         <div className="flex flex-col gap-3 w-full max-w-sm">
-          <Button fullWidth variant="accent" onClick={() => push("/dashboard")}>
+          <Button
+            fullWidth
+            variant="accent"
+            onClick={() => {
+              if (typeof window !== "undefined") {
+                window.location.assign("/dashboard");
+              } else {
+                push("/dashboard");
+              }
+            }}
+          >
             Retour au tableau de bord
           </Button>
           <Button fullWidth variant="outline" onClick={() => {
@@ -297,11 +490,12 @@ export function AddProductScreenNext() {
             setNewCollectionImageUrl("");
             setColor("");
             setValidationErrors([]);
-            setStock("5");
+            setStock(businessType === "service" ? "1" : "5");
             setPickup(true);
             setDelivery(false);
+            setOfferType(businessType === "service" ? "service" : "product");
           }}>
-            Ajouter un autre produit
+            {`Ajouter un autre ${offerLabel}`}
           </Button>
         </div>
       </div>
@@ -341,14 +535,15 @@ export function AddProductScreenNext() {
           setSelectedCollectionId(createdCollection.id);
         }
         const payload = {
-          title: title.trim() || "Produit brouillon",
+          offerType,
+          title: title.trim() || (isServiceOffer ? "Service brouillon" : "Produit brouillon"),
           description: description.trim(),
           features: features.trim(),
           composition: composition.trim(),
           returnConditions: returnConditions.trim(),
           color: color.trim(),
           price: target === "published" ? Number(price.replace(",", ".")) : Math.max(0, Number(price.replace(",", ".")) || 0),
-          stock: target === "published" ? Number(stock) : Math.max(0, Number(stock) || 0),
+          stock: isServiceOffer ? 1 : target === "published" ? Number(stock) : Math.max(0, Number(stock) || 0),
           categories,
           collectionId,
           pickup,
@@ -372,7 +567,7 @@ export function AddProductScreenNext() {
         }
         setSaveResult(target);
       } catch (error) {
-        const rawMessage = error instanceof Error ? error.message : "Impossible de publier le produit.";
+        const rawMessage = error instanceof Error ? error.message : "Impossible de publier l'offre.";
         const isProductsSchemaError =
           (rawMessage.includes("schema cache") || rawMessage.includes("column")) &&
           rawMessage.toLowerCase().includes("products");
@@ -396,19 +591,67 @@ export function AddProductScreenNext() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <Header
-        title={isEditMode ? "Modifier le produit" : isDuplicateMode ? "Copier le produit" : "Ajouter un produit"}
+        title={pageTitle}
         onBack={() => router.back()}
       />
 
       <div className="flex-1 px-4 lg:px-0 py-6 max-w-xl mx-auto w-full">
+        <div className="mb-4 rounded-2xl border border-border/50 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <label className="mb-1 block text-sm text-muted-foreground">Type d&apos;activité LOVCAL</label>
+              <p>{businessTypeLabel}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Modifiez ce choix si votre entreprise propose des produits, des services, ou les deux.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => push("/onboarding?next=/add-product&edit=1")}>
+              Modifier
+            </Button>
+          </div>
+        </div>
+
         {isEditMode && (
           <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
-            Modification du produit en cours.
+            Modification de l'offre en cours.
           </div>
         )}
         {isDuplicateMode && (
           <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Duplication du produit en cours. Le titre contient déjà "copie".
+            Duplication de l'offre en cours. Le titre contient deja "copie".
+          </div>
+        )}
+        {(canChooseOfferType || businessType === "service") && (
+          <div className="mb-4 rounded-2xl border border-border/50 bg-white p-4 shadow-sm">
+            <label className="mb-2 block text-sm">Type d'offre</label>
+            {canChooseOfferType ? (
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setOfferType("product")}
+                  className={`flex-1 rounded-xl border-2 px-4 py-3 text-left transition-colors ${
+                    offerType === "product" ? "border-coral bg-coral-light" : "border-border bg-white"
+                  }`}
+                >
+                  <p className="text-sm">Produit</p>
+                  <p className="text-xs text-muted-foreground">Article physique a acheter</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOfferType("service")}
+                  className={`flex-1 rounded-xl border-2 px-4 py-3 text-left transition-colors ${
+                    offerType === "service" ? "border-green bg-green-light" : "border-border bg-white"
+                  }`}
+                >
+                  <p className="text-sm">Service</p>
+                  <p className="text-xs text-muted-foreground">Prestation, rendez-vous ou intervention</p>
+                </button>
+              </div>
+            ) : (
+              <div className="rounded-xl bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                Cette entreprise publie uniquement des services.
+              </div>
+            )}
           </div>
         )}
         {/* Photos */}
@@ -470,9 +713,9 @@ export function AddProductScreenNext() {
 
         {/* Title */}
         <div className="mb-4">
-          <label className="text-sm mb-1.5 block">Titre du produit</label>
+          <label className="text-sm mb-1.5 block">{`Titre du ${offerLabel}`}</label>
           <Input
-            placeholder="Ex : Coffret Macarons Artisanaux"
+            placeholder={isServiceOffer ? "Ex : Atelier bouquet fleurs sechees" : "Ex : Coffret Macarons Artisanaux"}
             value={title}
             onChange={setTitle}
           />
@@ -482,7 +725,11 @@ export function AddProductScreenNext() {
         <div className="mb-4">
           <label className="text-sm mb-1.5 block">Description</label>
           <textarea
-            placeholder="Décrivez votre produit, ses ingrédients, sa fabrication..."
+            placeholder={
+              isServiceOffer
+                ? "Decrivez votre service, ce qui est propose, pour qui et dans quel cadre..."
+                : "Decrivez votre produit, ses ingredients, sa fabrication..."
+            }
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             className="w-full bg-input-background rounded-xl px-4 py-3 min-h-[100px] resize-none outline-none placeholder:text-muted-foreground"
@@ -490,9 +737,9 @@ export function AddProductScreenNext() {
         </div>
 
         <div className="mb-4">
-          <label className="text-sm mb-1.5 block">Caractéristiques</label>
+          <label className="text-sm mb-1.5 block">{isServiceOffer ? "Ce qui est inclus" : "Caracteristiques"}</label>
           <textarea
-            placeholder="Dimensions, utilisation, avantages..."
+            placeholder={isServiceOffer ? "Duree, contenu, materiel fourni, benefices..." : "Dimensions, utilisation, avantages..."}
             value={features}
             onChange={(e) => setFeatures(e.target.value)}
             className="w-full bg-input-background rounded-xl px-4 py-3 min-h-[90px] resize-none outline-none placeholder:text-muted-foreground"
@@ -500,9 +747,9 @@ export function AddProductScreenNext() {
         </div>
 
         <div className="mb-4">
-          <label className="text-sm mb-1.5 block">Composition</label>
+          <label className="text-sm mb-1.5 block">{isServiceOffer ? "Deroule / informations pratiques" : "Composition"}</label>
           <textarea
-            placeholder="Matières, ingrédients, provenance..."
+            placeholder={isServiceOffer ? "Lieu, preparation demandee, materiel a apporter..." : "Matieres, ingredients, provenance..."}
             value={composition}
             onChange={(e) => setComposition(e.target.value)}
             className="w-full bg-input-background rounded-xl px-4 py-3 min-h-[90px] resize-none outline-none placeholder:text-muted-foreground"
@@ -510,15 +757,16 @@ export function AddProductScreenNext() {
         </div>
 
         <div className="mb-4">
-          <label className="text-sm mb-1.5 block">Conditions de retour</label>
+          <label className="text-sm mb-1.5 block">{isServiceOffer ? "Conditions d'annulation / report" : "Conditions de retour"}</label>
           <textarea
-            placeholder="Délais, état du produit, modalités de remboursement..."
+            placeholder={isServiceOffer ? "Delais de report, annulation, remboursement..." : "Delais, etat du produit, modalites de remboursement..."}
             value={returnConditions}
             onChange={(e) => setReturnConditions(e.target.value)}
             className="w-full bg-input-background rounded-xl px-4 py-3 min-h-[90px] resize-none outline-none placeholder:text-muted-foreground"
           />
         </div>
 
+        {!isServiceOffer && (
         <div className="mb-4">
           <label className="text-sm mb-1.5 block">Collection</label>
           <select
@@ -589,6 +837,7 @@ export function AddProductScreenNext() {
             </div>
           )}
         </div>
+        )}
 
         {/* Category */}
         <div className="mb-4">
@@ -622,7 +871,7 @@ export function AddProductScreenNext() {
         {/* Price + Stock */}
         <div className="flex gap-3 mb-4">
           <div className="flex-1">
-            <label className="text-sm mb-1.5 block">Prix (€)</label>
+            <label className="text-sm mb-1.5 block">{isServiceOffer ? "Tarif minimal (€)" : "Prix (€)"}</label>
             <Input
               placeholder="0.00"
               type="number"
@@ -630,17 +879,26 @@ export function AddProductScreenNext() {
               onChange={setPrice}
             />
           </div>
-          <div className="flex-1">
-            <label className="text-sm mb-1.5 block">Stock disponible</label>
-            <Input
-              placeholder="1"
-              type="number"
-              value={stock}
-              onChange={setStock}
-            />
-          </div>
+          {!isServiceOffer && (
+            <div className="flex-1">
+              <label className="text-sm mb-1.5 block">Stock disponible</label>
+              <Input
+                placeholder="1"
+                type="number"
+                value={stock}
+                onChange={setStock}
+              />
+            </div>
+          )}
         </div>
 
+        {isServiceOffer && (
+          <p className="mb-4 text-xs text-muted-foreground">
+            Indiquez un tarif minimal. Le montant final pourra ensuite etre confirme apres echange avec le client.
+          </p>
+        )}
+
+        {!isServiceOffer && (
         <div className="mb-4">
           <label className="text-sm mb-1.5 block">Couleur du produit</label>
           <Input
@@ -651,17 +909,18 @@ export function AddProductScreenNext() {
           />
           <p className="mt-2 text-xs text-muted-foreground">Optionnel. Pour une autre couleur, duplique ensuite le produit.</p>
         </div>
+        )}
 
         {/* Fee info */}
         {price && parseFloat(price) > 0 && (
           <div className="mb-4 bg-coral-light rounded-xl p-3 text-sm">
             <div className="flex justify-between mb-1">
-              <span>Prix affiché</span>
+              <span>{isServiceOffer ? "Tarif minimal affiche" : "Prix affiche"}</span>
               <span>{parseFloat(price).toFixed(2)} €</span>
             </div>
             <div className="flex justify-between text-muted-foreground">
               <span className="flex items-center gap-1">
-                Commission MonCadeauLocal
+                Commission Lovcal
                 <Badge variant="coral">2%</Badge>
               </span>
               <span>-{(parseFloat(price) * 0.02).toFixed(2)} €</span>
@@ -677,7 +936,7 @@ export function AddProductScreenNext() {
 
         {/* Modes */}
         <div className="mb-6">
-          <label className="text-sm mb-2 block">Mode de remise</label>
+          <label className="text-sm mb-2 block">{isServiceOffer ? "Mode de prestation" : "Mode de remise"}</label>
           <div className="flex gap-3">
             <button
               onClick={() => setPickup(!pickup)}
@@ -687,8 +946,10 @@ export function AddProductScreenNext() {
             >
               <MapPin className={`w-5 h-5 ${pickup ? "text-coral" : "text-muted-foreground"}`} />
               <div className="text-left">
-                <p className="text-sm">Retrait en boutique</p>
-                <p className="text-xs text-muted-foreground">Le client vient chercher</p>
+                <p className="text-sm">{isServiceOffer ? "Sur place" : "Retrait en boutique"}</p>
+                <p className="text-xs text-muted-foreground">
+                  {isServiceOffer ? "Le client se rend sur place" : "Le client vient chercher"}
+                </p>
               </div>
             </button>
             <button
@@ -699,8 +960,10 @@ export function AddProductScreenNext() {
             >
               <Truck className={`w-5 h-5 ${delivery ? "text-green" : "text-muted-foreground"}`} />
               <div className="text-left">
-                <p className="text-sm">Livraison</p>
-                <p className="text-xs text-muted-foreground">Vous livrez le produit</p>
+                <p className="text-sm">{isServiceOffer ? "A distance / deplacement" : "Livraison"}</p>
+                <p className="text-xs text-muted-foreground">
+                  {isServiceOffer ? "Visio, telephone ou intervention chez le client" : "Vous livrez le produit"}
+                </p>
               </div>
             </button>
           </div>

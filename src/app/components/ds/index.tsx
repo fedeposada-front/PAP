@@ -13,7 +13,7 @@ import {
   User,
 } from "lucide-react";
 
-import logoHorizontalImg from "../../../assets/logo horizontal.png";
+import logoHorizontalImg from "../../../assets/logo-lovcal-horizontal.png";
 import giftIconImg from "../../../assets/gift-icon.png";
 
 // ─── CATEGORY ICON ─────────────────────────────────────
@@ -168,6 +168,7 @@ export function ProductCard({
   image,
   title,
   price,
+  offerType,
   shopName,
   availableToday,
   onClick,
@@ -175,6 +176,7 @@ export function ProductCard({
   image: string;
   title: string;
   price: number;
+  offerType?: "product" | "service";
   shopName: string;
   availableToday?: boolean;
   onClick?: () => void;
@@ -201,7 +203,7 @@ export function ProductCard({
       <div className="p-3">
         <p className="text-xs text-muted-foreground mb-0.5">{shopName}</p>
         <p className="text-sm truncate mb-1">{title}</p>
-        <p className="text-coral">{price.toFixed(2)} €</p>
+        <p className="text-coral">{offerType === "service" ? `A partir de ${price.toFixed(2)} €` : `${price.toFixed(2)} €`}</p>
       </div>
     </div>
   );
@@ -412,13 +414,13 @@ export function Logo({
   const image = size === "full" ? (
     <img
       src={logoHorizontalImg.src}
-      alt="MonCadeauLocal"
+      alt="Lovcal"
       className="block w-full max-w-full object-contain"
     />
   ) : (
     <img
       src={logoHorizontalImg.src}
-      alt="MonCadeauLocal"
+      alt="Lovcal"
       className="block w-auto max-w-full object-contain"
       style={{ height: `${heights[size]}px` }}
     />

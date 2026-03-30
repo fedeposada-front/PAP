@@ -1,4 +1,5 @@
 import { toShopSlug } from "../utils/shopRouting";
+import { fetchManagedShopAccess } from "./shopAccess";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -111,6 +112,11 @@ async function requestSupabaseAuth<T>(path: string, init: RequestInit, accessTok
 }
 
 async function getSellerShopId(userId: string, accessToken: string): Promise<string> {
+  const access = await fetchManagedShopAccess({ userId, accessToken });
+  if (access?.shopId) {
+    return access.shopId;
+  }
+
   const rows = await requestSupabaseAuth<SellerShopRow[]>(
     `shops?owner_user_id=eq.${userId}&select=id&order=created_at.asc&limit=1`,
     { method: "GET" },

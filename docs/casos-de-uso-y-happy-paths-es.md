@@ -2,7 +2,7 @@
 
 ## 1. Alcance
 
-Este documento describe los casos de uso funcionales y los happy paths de los perfiles de usuario actualmente contemplados en MonCadeauLocal.
+Este documento describe los casos de uso funcionales y los happy paths de los perfiles de usuario actualmente contemplados en Lovcal.
 
 Se basa en el comportamiento real implementado en la aplicación a fecha actual.
 

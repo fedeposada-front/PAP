@@ -1,4 +1,4 @@
--- MonCadeauLocal MVP schema
+-- Lovcal MVP schema
 -- Run in Supabase SQL Editor
 
 create extension if not exists pgcrypto;
@@ -94,6 +94,8 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   first_name text,
   last_name text,
+  nickname text,
+  city text,
   roles text[] not null default array['buyer']::text[],
   active_role text not null default 'buyer',
   shop_name text,
@@ -119,6 +121,8 @@ create table if not exists public.profiles (
 alter table public.profiles add column if not exists siret_number text;
 alter table public.profiles add column if not exists siret_verified boolean not null default false;
 alter table public.profiles add column if not exists shop_address text;
+alter table public.profiles add column if not exists nickname text;
+alter table public.profiles add column if not exists city text;
 alter table public.profiles add column if not exists seller_attested boolean not null default false;
 alter table public.profiles add column if not exists seller_vacation_mode boolean not null default false;
 alter table public.profiles add column if not exists seller_deactivated boolean not null default false;
@@ -163,6 +167,8 @@ create table if not exists public.shops (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid references auth.users(id) on delete set null,
   slug text,
+  business_type text not null default 'product',
+  business_type_configured boolean not null default false,
   name text not null,
   category text not null,
   category_id text default 'artisanat',
@@ -190,6 +196,205 @@ create table if not exists public.shops (
 alter table public.shops add column if not exists is_published boolean not null default true;
 alter table public.shops add column if not exists category_id text default 'artisanat';
 alter table public.shops add column if not exists slug text;
+alter table public.shops add column if not exists business_type text not null default 'product';
+alter table public.shops add column if not exists business_type_configured boolean not null default false;
+
+update public.shops
+set business_type = 'product'
+where business_type is null;
+
+update public.shops
+set business_type_configured = true
+where business_type_configured is null;
+
+create table if not exists public.shop_members (
+  id uuid primary key default gen_random_uuid(),
+  shop_id uuid not null references public.shops(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null default 'member',
+  created_by_user_id uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+update public.shop_members
+set role = 'manager'
+where role = 'admin';
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'shop_members_shop_user_unique'
+      and conrelid = 'public.shop_members'::regclass
+  ) then
+    alter table public.shop_members
+      add constraint shop_members_shop_user_unique
+      unique (shop_id, user_id);
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'shop_members_role_check'
+      and conrelid = 'public.shop_members'::regclass
+  ) then
+    alter table public.shop_members
+      add constraint shop_members_role_check
+      check (role in ('owner', 'manager', 'support', 'catalog', 'content', 'member'));
+  end if;
+end
+$$;
+
+create table if not exists public.shop_member_roles (
+  id uuid primary key default gen_random_uuid(),
+  shop_member_id uuid not null references public.shop_members(id) on delete cascade,
+  role text not null,
+  created_at timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'shop_member_roles_unique'
+      and conrelid = 'public.shop_member_roles'::regclass
+  ) then
+    alter table public.shop_member_roles
+      add constraint shop_member_roles_unique
+      unique (shop_member_id, role);
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'shop_member_roles_role_check'
+      and conrelid = 'public.shop_member_roles'::regclass
+  ) then
+    alter table public.shop_member_roles
+      add constraint shop_member_roles_role_check
+      check (role in ('manager', 'support', 'catalog', 'content'));
+  end if;
+end
+$$;
+
+create table if not exists public.shop_member_invitations (
+  id uuid primary key default gen_random_uuid(),
+  shop_id uuid not null references public.shops(id) on delete cascade,
+  invited_email text not null,
+  primary_role text not null default 'support',
+  token_hash text not null,
+  invited_by_user_id uuid references auth.users(id) on delete set null,
+  accepted_by_user_id uuid references auth.users(id) on delete set null,
+  status text not null default 'pending',
+  expires_at timestamptz not null,
+  last_sent_at timestamptz not null default now(),
+  accepted_at timestamptz,
+  revoked_at timestamptz,
+  provider text,
+  provider_message_id text,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'shop_member_invitations_token_hash_unique'
+      and conrelid = 'public.shop_member_invitations'::regclass
+  ) then
+    alter table public.shop_member_invitations
+      add constraint shop_member_invitations_token_hash_unique
+      unique (token_hash);
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'shop_member_invitations_primary_role_check'
+      and conrelid = 'public.shop_member_invitations'::regclass
+  ) then
+    alter table public.shop_member_invitations
+      add constraint shop_member_invitations_primary_role_check
+      check (primary_role in ('manager', 'support', 'catalog', 'content'));
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'shop_member_invitations_status_check'
+      and conrelid = 'public.shop_member_invitations'::regclass
+  ) then
+    alter table public.shop_member_invitations
+      add constraint shop_member_invitations_status_check
+      check (status in ('pending', 'accepted', 'revoked', 'expired'));
+  end if;
+end
+$$;
+
+create table if not exists public.shop_member_invitation_roles (
+  id uuid primary key default gen_random_uuid(),
+  invitation_id uuid not null references public.shop_member_invitations(id) on delete cascade,
+  role text not null,
+  created_at timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'shop_member_invitation_roles_unique'
+      and conrelid = 'public.shop_member_invitation_roles'::regclass
+  ) then
+    alter table public.shop_member_invitation_roles
+      add constraint shop_member_invitation_roles_unique
+      unique (invitation_id, role);
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'shop_member_invitation_roles_role_check'
+      and conrelid = 'public.shop_member_invitation_roles'::regclass
+  ) then
+    alter table public.shop_member_invitation_roles
+      add constraint shop_member_invitation_roles_role_check
+      check (role in ('manager', 'support', 'catalog', 'content'));
+  end if;
+end
+$$;
+
+insert into public.shop_member_roles (shop_member_id, role)
+select sm.id, sm.role
+from public.shop_members sm
+where sm.role in ('manager', 'support', 'catalog', 'content')
+on conflict do nothing;
 
 create or replace function public.slugify_shop_name(input text)
 returns text
@@ -264,6 +469,82 @@ set slug = g.slug
 from generated_slugs g
 where s.id = g.id;
 
+create or replace function public.is_shop_internal_user(target_shop_id uuid, target_user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.shops s
+    where s.id = target_shop_id
+      and target_user_id is not null
+      and (
+        s.owner_user_id = target_user_id
+        or exists (
+          select 1
+          from public.shop_members sm
+          where sm.shop_id = target_shop_id
+            and sm.user_id = target_user_id
+        )
+      )
+  );
+$$;
+
+create or replace function public.has_shop_member_role(
+  target_shop_id uuid,
+  target_user_id uuid,
+  allowed_roles text[]
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.shop_members sm
+    left join public.shop_member_roles smr on smr.shop_member_id = sm.id
+    where sm.shop_id = target_shop_id
+      and sm.user_id = target_user_id
+      and (
+        sm.role = any (allowed_roles)
+        or smr.role = any (allowed_roles)
+      )
+  );
+$$;
+
+create or replace function public.has_shop_permission(
+  target_shop_id uuid,
+  target_user_id uuid,
+  capability text
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select case
+    when target_user_id is null then false
+    when exists (
+      select 1
+      from public.shops s
+      where s.id = target_shop_id
+        and s.owner_user_id = target_user_id
+    ) then true
+    when capability = 'manage_catalog' then public.has_shop_member_role(target_shop_id, target_user_id, array['manager', 'catalog'])
+    when capability = 'manage_content' then public.has_shop_member_role(target_shop_id, target_user_id, array['manager', 'content'])
+    when capability = 'support' then public.has_shop_member_role(target_shop_id, target_user_id, array['manager', 'support'])
+    when capability = 'manage_members' then false
+    when capability = 'manage_settings' then false
+    else false
+  end;
+$$;
+
 create table if not exists public.followed_shops (
   user_id uuid not null references auth.users(id) on delete cascade,
   shop_id uuid not null references public.shops(id) on delete cascade,
@@ -286,6 +567,7 @@ create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
   shop_id uuid not null references public.shops(id) on delete cascade,
   collection_id uuid references public.shop_collections(id) on delete set null,
+  offer_type text not null default 'product',
   title text not null,
   description text,
   features text,
@@ -310,6 +592,11 @@ create table if not exists public.products (
 
 alter table public.products add column if not exists sold_count integer not null default 0;
 alter table public.products add column if not exists category_id text default 'artisanat';
+alter table public.products add column if not exists offer_type text not null default 'product';
+
+update public.products
+set offer_type = 'product'
+where offer_type is null;
 
 create table if not exists public.favorite_products (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -516,6 +803,18 @@ $$;
 do $$
 begin
   if not exists (
+    select 1 from pg_constraint where conname = 'shops_business_type_check'
+  ) then
+    alter table public.shops
+      add constraint shops_business_type_check
+      check (business_type in ('product', 'service', 'hybrid'));
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
     select 1 from pg_constraint where conname = 'products_category_sync_check'
   ) then
     alter table public.products
@@ -525,10 +824,30 @@ begin
 end
 $$;
 
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'products_offer_type_check'
+  ) then
+    alter table public.products
+      add constraint products_offer_type_check
+      check (offer_type in ('product', 'service'));
+  end if;
+end
+$$;
+
 create index if not exists idx_shops_city on public.shops(city);
 create index if not exists idx_shops_category on public.shops(category);
 create index if not exists idx_shops_category_id on public.shops(category_id);
+create index if not exists idx_shops_business_type on public.shops(business_type);
+create index if not exists idx_shops_business_type_configured on public.shops(business_type_configured);
 create index if not exists idx_shops_is_published on public.shops(is_published);
+create index if not exists idx_shop_members_shop_id on public.shop_members(shop_id);
+create index if not exists idx_shop_members_user_id on public.shop_members(user_id);
+create index if not exists idx_shop_member_roles_member_id on public.shop_member_roles(shop_member_id);
+create index if not exists idx_shop_member_invitations_shop_status on public.shop_member_invitations(shop_id, status, created_at desc);
+create index if not exists idx_shop_member_invitations_email on public.shop_member_invitations(lower(invited_email));
+create index if not exists idx_shop_member_invitation_roles_invitation_id on public.shop_member_invitation_roles(invitation_id);
 create unique index if not exists uniq_shops_slug on public.shops(slug) where slug is not null;
 create unique index if not exists uniq_shops_owner_user_id on public.shops(owner_user_id) where owner_user_id is not null;
 create index if not exists idx_profiles_active_role on public.profiles(active_role);
@@ -538,6 +857,7 @@ create index if not exists idx_products_shop_id on public.products(shop_id);
 create index if not exists idx_products_collection_id on public.products(collection_id);
 create index if not exists idx_products_category on public.products(category);
 create index if not exists idx_products_category_id on public.products(category_id);
+create index if not exists idx_products_offer_type on public.products(offer_type);
 create index if not exists idx_products_categories_gin on public.products using gin(categories);
 create index if not exists idx_favorite_products_user_created_at on public.favorite_products(user_id, created_at desc);
 create index if not exists idx_followed_shops_user_created_at on public.followed_shops(user_id, created_at desc);
@@ -577,6 +897,16 @@ drop trigger if exists trg_shops_assign_slug on public.shops;
 create trigger trg_shops_assign_slug
 before insert or update of name on public.shops
 for each row execute function public.assign_shop_slug();
+
+drop trigger if exists trg_shop_members_updated_at on public.shop_members;
+create trigger trg_shop_members_updated_at
+before update on public.shop_members
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_shop_member_invitations_updated_at on public.shop_member_invitations;
+create trigger trg_shop_member_invitations_updated_at
+before update on public.shop_member_invitations
+for each row execute function public.set_updated_at();
 
 drop trigger if exists trg_products_updated_at on public.products;
 create trigger trg_products_updated_at
@@ -1297,6 +1627,10 @@ alter table public.profiles enable row level security;
 alter table public.category_groups enable row level security;
 alter table public.categories enable row level security;
 alter table public.shops enable row level security;
+alter table public.shop_members enable row level security;
+alter table public.shop_member_roles enable row level security;
+alter table public.shop_member_invitations enable row level security;
+alter table public.shop_member_invitation_roles enable row level security;
 alter table public.products enable row level security;
 alter table public.favorite_products enable row level security;
 alter table public.followed_shops enable row level security;
@@ -1319,7 +1653,12 @@ alter table public.message_email_notifications enable row level security;
 
 grant usage on schema public to anon, authenticated, service_role;
 
+grant select, insert, update on public.profiles to service_role;
 grant select on public.shops to service_role;
+grant select, insert, update, delete on public.shop_members to service_role;
+grant select, insert, update, delete on public.shop_member_roles to service_role;
+grant select, insert, update, delete on public.shop_member_invitations to service_role;
+grant select, insert, update, delete on public.shop_member_invitation_roles to service_role;
 grant select on public.conversations to service_role;
 grant select on public.messages to service_role;
 grant select, update on public.message_email_notifications to service_role;
@@ -1337,6 +1676,10 @@ grant select, insert, update, delete on public.profiles to authenticated;
 grant select on public.category_groups to authenticated;
 grant select on public.categories to authenticated;
 grant select, insert, update, delete on public.shops to authenticated;
+grant select, insert, update, delete on public.shop_members to authenticated;
+grant select, insert, update, delete on public.shop_member_roles to authenticated;
+grant select, insert, update, delete on public.shop_member_invitations to authenticated;
+grant select, insert, update, delete on public.shop_member_invitation_roles to authenticated;
 grant select, insert, update, delete on public.products to authenticated;
 grant select, insert, update, delete on public.favorite_products to authenticated;
 grant select, insert, update, delete on public.followed_shops to authenticated;
@@ -1356,6 +1699,9 @@ grant select on public.payment_attempts to authenticated;
 grant select on public.payouts to authenticated;
 grant select, insert on public.conversations to authenticated;
 grant select, insert on public.messages to authenticated;
+grant execute on function public.is_shop_internal_user(uuid, uuid) to authenticated;
+grant execute on function public.has_shop_member_role(uuid, uuid, text[]) to authenticated;
+grant execute on function public.has_shop_permission(uuid, uuid, text) to authenticated;
 
 drop policy if exists "users can read own profile" on public.profiles;
 create policy "users can read own profile"
@@ -1419,6 +1765,192 @@ for delete
 to authenticated
 using (auth.uid() = owner_user_id);
 
+drop policy if exists "shop owners and members can read memberships" on public.shop_members;
+create policy "shop owners and members can read memberships"
+on public.shop_members
+for select
+to authenticated
+using (
+  auth.uid() = user_id
+  or exists (
+    select 1
+    from public.shops s
+    where s.id = shop_members.shop_id
+      and s.owner_user_id = auth.uid()
+  )
+);
+
+drop policy if exists "shop owners can insert memberships" on public.shop_members;
+create policy "shop owners can insert memberships"
+on public.shop_members
+for insert
+to authenticated
+with check (
+  exists (
+    select 1
+    from public.shops s
+    where s.id = shop_members.shop_id
+      and s.owner_user_id = auth.uid()
+  )
+);
+
+drop policy if exists "shop owners can update memberships" on public.shop_members;
+create policy "shop owners can update memberships"
+on public.shop_members
+for update
+to authenticated
+using (
+  exists (
+    select 1
+    from public.shops s
+    where s.id = shop_members.shop_id
+      and s.owner_user_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.shops s
+    where s.id = shop_members.shop_id
+      and s.owner_user_id = auth.uid()
+  )
+);
+
+drop policy if exists "shop owners can delete memberships" on public.shop_members;
+create policy "shop owners can delete memberships"
+on public.shop_members
+for delete
+to authenticated
+using (
+  exists (
+    select 1
+    from public.shops s
+    where s.id = shop_members.shop_id
+      and s.owner_user_id = auth.uid()
+  )
+);
+
+drop policy if exists "shop owners and members can read member roles" on public.shop_member_roles;
+create policy "shop owners and members can read member roles"
+on public.shop_member_roles
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.shop_members sm
+    where sm.id = shop_member_roles.shop_member_id
+      and (
+        sm.user_id = auth.uid()
+        or exists (
+          select 1
+          from public.shops s
+          where s.id = sm.shop_id
+            and s.owner_user_id = auth.uid()
+        )
+      )
+  )
+);
+
+drop policy if exists "shop owners can manage member roles" on public.shop_member_roles;
+create policy "shop owners can manage member roles"
+on public.shop_member_roles
+for all
+to authenticated
+using (
+  exists (
+    select 1
+    from public.shop_members sm
+    join public.shops s on s.id = sm.shop_id
+    where sm.id = shop_member_roles.shop_member_id
+      and s.owner_user_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.shop_members sm
+    join public.shops s on s.id = sm.shop_id
+    where sm.id = shop_member_roles.shop_member_id
+      and s.owner_user_id = auth.uid()
+  )
+);
+
+drop policy if exists "shop owners can read invitations" on public.shop_member_invitations;
+create policy "shop owners can read invitations"
+on public.shop_member_invitations
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.shops s
+    where s.id = shop_member_invitations.shop_id
+      and s.owner_user_id = auth.uid()
+  )
+);
+
+drop policy if exists "shop owners can manage invitations" on public.shop_member_invitations;
+create policy "shop owners can manage invitations"
+on public.shop_member_invitations
+for all
+to authenticated
+using (
+  exists (
+    select 1
+    from public.shops s
+    where s.id = shop_member_invitations.shop_id
+      and s.owner_user_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.shops s
+    where s.id = shop_member_invitations.shop_id
+      and s.owner_user_id = auth.uid()
+  )
+);
+
+drop policy if exists "shop owners can read invitation roles" on public.shop_member_invitation_roles;
+create policy "shop owners can read invitation roles"
+on public.shop_member_invitation_roles
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.shop_member_invitations invitation
+    join public.shops s on s.id = invitation.shop_id
+    where invitation.id = shop_member_invitation_roles.invitation_id
+      and s.owner_user_id = auth.uid()
+  )
+);
+
+drop policy if exists "shop owners can manage invitation roles" on public.shop_member_invitation_roles;
+create policy "shop owners can manage invitation roles"
+on public.shop_member_invitation_roles
+for all
+to authenticated
+using (
+  exists (
+    select 1
+    from public.shop_member_invitations invitation
+    join public.shops s on s.id = invitation.shop_id
+    where invitation.id = shop_member_invitation_roles.invitation_id
+      and s.owner_user_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.shop_member_invitations invitation
+    join public.shops s on s.id = invitation.shop_id
+    where invitation.id = shop_member_invitation_roles.invitation_id
+      and s.owner_user_id = auth.uid()
+  )
+);
+
 drop policy if exists "products are readable by everyone" on public.products;
 create policy "products are readable by everyone"
 on public.products
@@ -1474,21 +2006,16 @@ for select
 using (true);
 
 drop policy if exists "shop owners can manage own collections" on public.shop_collections;
-create policy "shop owners can manage own collections"
+drop policy if exists "shop owners and catalog members can manage collections" on public.shop_collections;
+create policy "shop owners and catalog members can manage collections"
 on public.shop_collections
 for all
 to authenticated
 using (
-  exists (
-    select 1 from public.shops s
-    where s.id = shop_collections.shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(shop_collections.shop_id, auth.uid(), 'manage_catalog')
 )
 with check (
-  exists (
-    select 1 from public.shops s
-    where s.id = shop_collections.shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(shop_collections.shop_id, auth.uid(), 'manage_catalog')
 );
 
 drop policy if exists "published shop news are readable by everyone" on public.shop_news;
@@ -1498,57 +2025,46 @@ for select
 using (is_published = true);
 
 drop policy if exists "shop owners can read own shop news" on public.shop_news;
-create policy "shop owners can read own shop news"
+drop policy if exists "shop owners and content members can read own shop news" on public.shop_news;
+create policy "shop owners and content members can read own shop news"
 on public.shop_news
 for select
 to authenticated
 using (
-  exists (
-    select 1 from public.shops s
-    where s.id = shop_news.shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(shop_news.shop_id, auth.uid(), 'manage_content')
 );
 
 drop policy if exists "shop owners can insert own shop news" on public.shop_news;
-create policy "shop owners can insert own shop news"
+drop policy if exists "shop owners and content members can insert own shop news" on public.shop_news;
+create policy "shop owners and content members can insert own shop news"
 on public.shop_news
 for insert
 to authenticated
 with check (
-  exists (
-    select 1 from public.shops s
-    where s.id = shop_news.shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(shop_news.shop_id, auth.uid(), 'manage_content')
 );
 
 drop policy if exists "shop owners can update own shop news" on public.shop_news;
-create policy "shop owners can update own shop news"
+drop policy if exists "shop owners and content members can update own shop news" on public.shop_news;
+create policy "shop owners and content members can update own shop news"
 on public.shop_news
 for update
 to authenticated
 using (
-  exists (
-    select 1 from public.shops s
-    where s.id = shop_news.shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(shop_news.shop_id, auth.uid(), 'manage_content')
 )
 with check (
-  exists (
-    select 1 from public.shops s
-    where s.id = shop_news.shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(shop_news.shop_id, auth.uid(), 'manage_content')
 );
 
 drop policy if exists "shop owners can delete own shop news" on public.shop_news;
-create policy "shop owners can delete own shop news"
+drop policy if exists "shop owners and content members can delete own shop news" on public.shop_news;
+create policy "shop owners and content members can delete own shop news"
 on public.shop_news
 for delete
 to authenticated
 using (
-  exists (
-    select 1 from public.shops s
-    where s.id = shop_news.shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(shop_news.shop_id, auth.uid(), 'manage_content')
 );
 
 drop policy if exists "shop news likes are readable by everyone" on public.shop_news_likes;
@@ -1572,45 +2088,36 @@ to authenticated
 using (auth.uid() = user_id);
 
 drop policy if exists "shop owners can insert products" on public.products;
-create policy "shop owners can insert products"
+drop policy if exists "shop owners and catalog members can insert products" on public.products;
+create policy "shop owners and catalog members can insert products"
 on public.products
 for insert
 to authenticated
 with check (
-  exists (
-    select 1 from public.shops s
-    where s.id = shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(products.shop_id, auth.uid(), 'manage_catalog')
 );
 
 drop policy if exists "shop owners can update products" on public.products;
-create policy "shop owners can update products"
+drop policy if exists "shop owners and catalog members can update products" on public.products;
+create policy "shop owners and catalog members can update products"
 on public.products
 for update
 to authenticated
 using (
-  exists (
-    select 1 from public.shops s
-    where s.id = shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(products.shop_id, auth.uid(), 'manage_catalog')
 )
 with check (
-  exists (
-    select 1 from public.shops s
-    where s.id = shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(products.shop_id, auth.uid(), 'manage_catalog')
 );
 
 drop policy if exists "shop owners can delete products" on public.products;
-create policy "shop owners can delete products"
+drop policy if exists "shop owners and catalog members can delete products" on public.products;
+create policy "shop owners and catalog members can delete products"
 on public.products
 for delete
 to authenticated
 using (
-  exists (
-    select 1 from public.shops s
-    where s.id = shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(products.shop_id, auth.uid(), 'manage_catalog')
 );
 
 drop policy if exists "anyone can insert lead events" on public.lead_events;
@@ -1620,15 +2127,13 @@ for insert
 with check (true);
 
 drop policy if exists "shop owners can read own lead events" on public.lead_events;
-create policy "shop owners can read own lead events"
+drop policy if exists "shop owners and support members can read own lead events" on public.lead_events;
+create policy "shop owners and support members can read own lead events"
 on public.lead_events
 for select
 to authenticated
 using (
-  exists (
-    select 1 from public.shops s
-    where s.id = lead_events.shop_id and s.owner_user_id = auth.uid()
-  )
+  public.has_shop_permission(lead_events.shop_id, auth.uid(), 'support')
 );
 
 drop policy if exists "ads are readable by everyone" on public.ads;
@@ -1697,6 +2202,7 @@ with check (
     select 1 from public.shops s
     where s.id = orders.shop_id
   )
+  and not public.is_shop_internal_user(orders.shop_id, auth.uid())
 );
 
 drop policy if exists "buyers can update own orders" on public.orders;
@@ -1920,16 +2426,14 @@ using (
 );
 
 drop policy if exists "buyers and shop owners can read conversations" on public.conversations;
-create policy "buyers and shop owners can read conversations"
+drop policy if exists "buyers and shop staff can read conversations" on public.conversations;
+create policy "buyers and shop staff can read conversations"
 on public.conversations
 for select
 to authenticated
 using (
   auth.uid() = buyer_user_id
-  or exists (
-    select 1 from public.shops s
-    where s.id = conversations.shop_id and s.owner_user_id = auth.uid()
-  )
+  or public.has_shop_permission(conversations.shop_id, auth.uid(), 'support')
 );
 
 drop policy if exists "buyers can create conversations" on public.conversations;
@@ -1954,11 +2458,10 @@ using (
   exists (
     select 1
     from public.conversations c
-    join public.shops s on s.id = c.shop_id
     where c.id = messages.conversation_id
       and (
         c.buyer_user_id = auth.uid()
-        or s.owner_user_id = auth.uid()
+        or public.has_shop_permission(c.shop_id, auth.uid(), 'support')
       )
   )
 );
@@ -1973,11 +2476,10 @@ with check (
   and exists (
     select 1
     from public.conversations c
-    join public.shops s on s.id = c.shop_id
     where c.id = messages.conversation_id
       and (
         c.buyer_user_id = auth.uid()
-        or s.owner_user_id = auth.uid()
+        or public.has_shop_permission(c.shop_id, auth.uid(), 'support')
       )
   )
 );

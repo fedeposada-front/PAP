@@ -92,7 +92,7 @@ async function sendWithBrevo(params: TransactionalEmailParams): Promise<Transact
   }
 
   const match = EMAIL_FROM.match(/^(.*)<([^>]+)>$/);
-  const senderName = match?.[1]?.trim().replace(/^"|"$/g, "") || "MonCadeauLocal";
+  const senderName = match?.[1]?.trim().replace(/^"|"$/g, "") || "Lovcal";
   const senderEmail = match?.[2]?.trim() || EMAIL_FROM;
 
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {

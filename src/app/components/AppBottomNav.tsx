@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { Newspaper, MapPin, MessageCircle, ShoppingBag, User } from "lucide-react";
 import { useAuth } from "./AuthContext";
+import { resolveSellerEntryPath } from "../services/shopAccess";
 
 const HIDDEN_ROUTES = new Set([
   "/",
@@ -18,7 +19,7 @@ const HIDDEN_ROUTES = new Set([
 export function AppBottomNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, accessToken } = useAuth();
 
   if (!pathname || HIDDEN_ROUTES.has(pathname)) {
     return null;
@@ -40,15 +41,24 @@ export function AppBottomNav() {
             : "home";
 
   const pushProfile = () => {
-    if (!isAuthenticated) {
-      router.push("/auth?next=/profile");
-      return;
-    }
-    if (user?.role === "seller") {
-      router.push(user.siretVerified ? "/dashboard" : "/siret");
-      return;
-    }
-    router.push("/profile");
+    const run = async () => {
+      if (!isAuthenticated) {
+        router.push("/auth?next=/profile");
+        return;
+      }
+      if (user?.role === "seller" && user?.id) {
+        const targetPath = await resolveSellerEntryPath({
+          userId: user.id,
+          accessToken,
+          siretVerified: user.siretVerified,
+        });
+        router.push(targetPath);
+        return;
+      }
+      router.push("/profile");
+    };
+
+    void run();
   };
 
   const tabs = [

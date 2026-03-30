@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Mail, Lock, Eye, EyeOff, ShoppingBag, Store, ChevronLeft } from "lucide-react";
 import { Button, Input, Logo, Header } from "../ds";
@@ -74,6 +74,7 @@ export function AuthScreenNext() {
   const { signIn, signInWithGoogle, signUp, isAuthenticated, isLoading, user, logout, switchRole, updateProfile } = useAuth();
   const requestedRole = searchParams.get("role");
   const requestedNextPath = sanitizeRedirectPath(searchParams.get("next"));
+  const isInviteRedirect = requestedNextPath?.startsWith("/invite/") ?? false;
   const searchParamsKey = searchParams.toString();
   const [role, setRole] = useState<"buyer" | "seller" | null>(null);
   const [mode, setMode] = useState<"login" | "signup">("signup");
@@ -90,6 +91,8 @@ export function AuthScreenNext() {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState<string | null>(null);
   const [isHandlingExternalAuthReturn, setIsHandlingExternalAuthReturn] = useState(false);
+  const [showInviteAccountChooser, setShowInviteAccountChooser] = useState(false);
+  const inviteGuardInitializedRef = useRef(false);
 
   const handleRoleChoice = useCallback(
     (nextRole: "buyer" | "seller", nextMode: "login" | "signup") => {
@@ -137,9 +140,24 @@ export function AuthScreenNext() {
     }
   }, [searchParams, searchParamsKey]);
 
+  useEffect(() => {
+    if (inviteGuardInitializedRef.current) return;
+    if (!isInviteRedirect) {
+      inviteGuardInitializedRef.current = true;
+      return;
+    }
+    if (isLoading) return;
+
+    inviteGuardInitializedRef.current = true;
+    if (isAuthenticated && user) {
+      setShowInviteAccountChooser(true);
+    }
+  }, [isInviteRedirect, isLoading, isAuthenticated, user]);
+
   // If authenticated and a role is explicitly requested, apply and redirect.
   useEffect(() => {
     if (!isAuthenticated || !user) return;
+    if (showInviteAccountChooser) return;
 
     const run = async () => {
       const redirectPath = requestedNextPath ?? consumePostAuthRedirect();
@@ -171,16 +189,17 @@ export function AuthScreenNext() {
     };
 
     void run();
-  }, [isAuthenticated, user, requestedRole, requestedNextPath, replace, switchRole]);
+  }, [isAuthenticated, user, requestedRole, requestedNextPath, replace, switchRole, showInviteAccountChooser]);
 
   useEffect(() => {
     if (!isAuthenticated || !user) return;
+    if (showInviteAccountChooser) return;
     if (requestedRole === "seller" || requestedRole === "buyer" || requestedNextPath) return;
 
     if (user.role === "seller") {
       replace("/dashboard");
     }
-  }, [isAuthenticated, user, requestedRole, requestedNextPath, replace]);
+  }, [isAuthenticated, user, requestedRole, requestedNextPath, replace, showInviteAccountChooser]);
 
   useEffect(() => {
     if (!isAuthenticated || !user) return;
@@ -197,6 +216,52 @@ export function AuthScreenNext() {
         <p className="mt-2 max-w-sm text-center text-sm text-muted-foreground">
           Finalisation de votre connexion Google...
         </p>
+      </div>
+    );
+  }
+
+  if (isAuthenticated && user && showInviteAccountChooser && isInviteRedirect) {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <Header title="Invitation d'équipe" onBack={() => router.back()} />
+        <div className="flex-1 flex items-center justify-center px-6 py-8">
+          <div className="w-full max-w-md rounded-3xl border border-border bg-white p-6 shadow-sm">
+            <Logo size="lg" />
+            <h2 className="mt-6">Vous êtes déjà connectée</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Session active : <strong>{user.email}</strong>
+            </p>
+            <p className="mt-3 text-sm text-muted-foreground">
+              Pour accepter une invitation d&apos;équipe, utilisez bien l&apos;adresse email invitée. Si ce n&apos;est pas le bon compte, déconnectez-vous puis créez-vous un compte avec l&apos;email invité.
+            </p>
+            <div className="mt-6 flex flex-col gap-3">
+              <Button
+                fullWidth
+                variant="accent"
+                onClick={() => {
+                  setShowInviteAccountChooser(false);
+                  replace(requestedNextPath ?? consumePostAuthRedirect() ?? "/home");
+                }}
+              >
+                Continuer avec ce compte
+              </Button>
+              <Button
+                fullWidth
+                variant="outline"
+                onClick={() => {
+                  const run = async () => {
+                    await logout();
+                    setShowInviteAccountChooser(false);
+                    setRole(null);
+                  };
+                  void run();
+                }}
+              >
+                Utiliser un autre compte
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -332,7 +397,7 @@ export function AuthScreenNext() {
           <Logo size="2xl" />
           <h2 className="mt-6 mb-2 text-center">Bienvenue !</h2>
           <p className="text-muted-foreground text-center text-sm mb-8">
-            Comment souhaitez-vous utiliser Mon cadeau local ?
+            Comment souhaitez-vous utiliser LOVCAL ?
           </p>
 
           <div className="w-full space-y-4">
@@ -342,9 +407,9 @@ export function AuthScreenNext() {
                   <ShoppingBag className="w-7 h-7 text-coral" />
                 </div>
                 <div className="min-w-0 flex-1 text-left">
-                  <h3>Je cherche un cadeau</h3>
+                  <h3>Je cherche un produit / service</h3>
                   <p className="text-sm text-muted-foreground">
-                    Découvrir les boutiques et acheter localement
+                    Découvrir des entreprises locales et acheter ou réserver
                   </p>
                   <div className="mt-3 flex items-center gap-5 text-sm font-medium">
                     <button
@@ -372,9 +437,9 @@ export function AuthScreenNext() {
                   <Store className="w-7 h-7 text-green" />
                 </div>
                 <div className="min-w-0 flex-1 text-left">
-                  <h3>Je suis commerçant</h3>
+                  <h3>Je suis une entreprise</h3>
                   <p className="text-sm text-muted-foreground">
-                    Vendre mes produits sur la plateforme
+                    Proposer mes produits ou mes services sur la plateforme
                   </p>
                   <div className="mt-3 flex items-center gap-5 text-sm font-medium">
                     <button
@@ -404,6 +469,7 @@ export function AuthScreenNext() {
   const handleAuth = () => {
     const run = async () => {
       if (!role) return;
+      setShowInviteAccountChooser(false);
       setIsSubmitting(true);
       setErrorMessage(null);
       try {
@@ -444,6 +510,7 @@ export function AuthScreenNext() {
   const handleGoogleAuth = () => {
     const run = async () => {
       if (!role) return;
+      setShowInviteAccountChooser(false);
       setIsSubmitting(true);
       setErrorMessage(null);
       try {

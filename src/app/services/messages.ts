@@ -2,6 +2,12 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const MESSAGES_UPDATED_EVENT = "mcl_messages_updated";
 
+interface ApiEnvelope<T> {
+  ok?: boolean;
+  result?: T;
+  message?: string;
+}
+
 interface ConversationRow {
   id: string;
   buyer_user_id: string;
@@ -25,6 +31,12 @@ export interface MessageConversation {
   id: string;
   buyerUserId: string;
   buyerDisplayName: string;
+  buyerFullName?: string | null;
+  buyerNickname?: string | null;
+  buyerEmail?: string | null;
+  buyerCity?: string | null;
+  buyerRating?: number | null;
+  buyerReviewCount?: number;
   shopId: string;
   lastMessageAt: string;
   lastMessagePreview: string | null;
@@ -49,6 +61,12 @@ function mapConversationRow(row: ConversationRow): MessageConversation {
     id: row.id,
     buyerUserId: row.buyer_user_id,
     buyerDisplayName: row.buyer_display_name?.trim() || "Client",
+    buyerFullName: null,
+    buyerNickname: null,
+    buyerEmail: null,
+    buyerCity: null,
+    buyerRating: null,
+    buyerReviewCount: 0,
     shopId: row.shop_id,
     lastMessageAt: row.last_message_at,
     lastMessagePreview: row.last_message_preview ?? null,
@@ -100,6 +118,23 @@ async function requestSupabase<T>(path: string, init: RequestInit, accessToken: 
   return payload as T;
 }
 
+async function requestMessagesApi<T>(path: string, accessToken: string): Promise<T> {
+  const response = await fetch(path, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    cache: "no-store",
+  });
+
+  const payload = (await response.json().catch(() => null)) as ApiEnvelope<T> | null;
+  if (!response.ok) {
+    throw new Error(payload?.message ?? "Erreur messagerie.");
+  }
+
+  return (payload?.result ?? null) as T;
+}
+
 export function subscribeToMessages(listener: () => void) {
   if (typeof window === "undefined") return () => {};
   window.addEventListener(MESSAGES_UPDATED_EVENT, listener);
@@ -111,30 +146,17 @@ export function subscribeToMessages(listener: () => void) {
 export async function fetchAccessibleConversations(params: {
   accessToken: string;
 }): Promise<MessageConversation[]> {
-  if (!hasSupabaseConfig()) return [];
-
-  const rows = await requestSupabase<ConversationRow[]>(
-    "conversations?select=id,buyer_user_id,buyer_display_name,shop_id,last_message_at,last_message_preview,created_at&order=last_message_at.desc",
-    { method: "GET" },
-    params.accessToken
-  );
-
-  return rows.map(mapConversationRow);
+  return requestMessagesApi<MessageConversation[]>("/api/messages/conversations", params.accessToken);
 }
 
 export async function fetchConversation(params: {
   conversationId: string;
   accessToken: string;
 }): Promise<MessageConversation | null> {
-  if (!hasSupabaseConfig()) return null;
-
-  const rows = await requestSupabase<ConversationRow[]>(
-    `conversations?id=eq.${params.conversationId}&select=id,buyer_user_id,buyer_display_name,shop_id,last_message_at,last_message_preview,created_at&limit=1`,
-    { method: "GET" },
+  return requestMessagesApi<MessageConversation | null>(
+    `/api/messages/conversations?conversationId=${encodeURIComponent(params.conversationId)}`,
     params.accessToken
   );
-
-  return rows[0] ? mapConversationRow(rows[0]) : null;
 }
 
 export async function ensureBuyerConversation(params: {
@@ -152,7 +174,31 @@ export async function ensureBuyerConversation(params: {
     { method: "GET" },
     params.accessToken
   );
-  if (existing[0]) return mapConversationRow(existing[0]);
+  if (existing[0]) {
+    const requestedDisplayName = params.buyerDisplayName.trim();
+    const currentDisplayName = existing[0].buyer_display_name?.trim() ?? "";
+
+    if (requestedDisplayName && requestedDisplayName !== currentDisplayName) {
+      try {
+        await requestSupabase<ConversationRow[]>(
+          `conversations?id=eq.${existing[0].id}&select=id,buyer_user_id,buyer_display_name,shop_id,last_message_at,last_message_preview,created_at`,
+          {
+            method: "PATCH",
+            headers: { Prefer: "return=representation" },
+            body: JSON.stringify({
+              buyer_display_name: requestedDisplayName,
+            }),
+          },
+          params.accessToken
+        );
+        existing[0].buyer_display_name = requestedDisplayName;
+      } catch {
+        // Keep the existing conversation even if the display-name refresh fails.
+      }
+    }
+
+    return mapConversationRow(existing[0]);
+  }
 
   try {
     const inserted = await requestSupabase<ConversationRow[]>(

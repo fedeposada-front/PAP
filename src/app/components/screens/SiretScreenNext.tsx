@@ -140,7 +140,7 @@ export function SiretScreenNext() {
           shopAddress: nextCompanyAddress,
           sellerAttested: true,
         });
-        push("/settings");
+        push("/onboarding?next=/settings");
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Impossible de finaliser la vérification.";
@@ -190,7 +190,7 @@ export function SiretScreenNext() {
               </div>
               <h2 className="mb-2">Vérifiez votre entreprise</h2>
               <p className="text-sm text-muted-foreground">
-                Pour vendre sur MonCadeauLocal, votre entreprise doit être
+                Pour vendre sur Lovcal, votre entreprise doit être
                 enregistrée avec un numéro SIRET valide.
               </p>
             </div>

@@ -1,8 +1,8 @@
-# Documentacion Tecnica - MonCadeauLocal
+# Documentacion Tecnica - Lovcal
 
 ## 1. Objetivo del proyecto
 
-MonCadeauLocal es una aplicacion marketplace orientada al comercio local. Permite:
+Lovcal es una aplicacion marketplace orientada al comercio local. Permite:
 
 - descubrir tiendas cercanas y productos publicados
 - gestionar perfiles comprador y vendedor

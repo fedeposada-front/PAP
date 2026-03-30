@@ -50,6 +50,7 @@ import {
   type SponsoredAd,
 } from "../../services/ads";
 import { fetchProducts, fetchShops } from "../../services/catalog";
+import { resolveSellerEntryPath } from "../../services/shopAccess";
 import {
   CATEGORY_GROUPS,
   CATEGORY_GROUPS_WITH_ALL,
@@ -59,7 +60,7 @@ import type { Product, Shop } from "../../types/catalog";
 import { getProductHref, getShopHref } from "../../utils/shopRouting";
 
 const BUYER_PROFILE_STORAGE_KEY = "mcl_buyer_profile_v1";
-type SearchScope = "product" | "shop";
+type SearchScope = "product" | "service";
 
 const normalizeCity = (value: string) =>
   value
@@ -167,7 +168,7 @@ export function HomeScreenNext() {
   const navigate = (path: string) => router.push(path);
   const { location } = useLocation();
   const { totalItems } = useCart();
-  const { user, isAuthenticated, switchRole, logout } = useAuth();
+  const { user, isAuthenticated, accessToken, switchRole, logout } = useAuth();
   const [view, setView] = useState<"map" | "list">("map");
   const [activeCategory, setActiveCategory] = useState("all");
   const [showFilters, setShowFilters] = useState(false);
@@ -201,9 +202,9 @@ export function HomeScreenNext() {
     () => normalizePostalCode(postalCodeFilter).slice(0, 5),
     [postalCodeFilter]
   );
-  const searchScopeLabel = searchScope === "product" ? "Produit" : "Boutique";
+  const searchScopeLabel = searchScope === "product" ? "Produit" : "Service";
   const searchPlaceholder =
-    searchScope === "product" ? "Rechercher un produit..." : "Rechercher une boutique...";
+    searchScope === "product" ? "Rechercher un produit..." : "Rechercher un service...";
   const publicInfoLinks = [
     { label: "Comment ça marche", href: "/how-it-works" },
     { label: "À propos", href: "/about" },
@@ -376,7 +377,7 @@ export function HomeScreenNext() {
     if (searchTokens.length === 0) return baseFilteredShops;
 
     return baseFilteredShops.filter((shop) => {
-      if (searchScope === "shop") {
+      if (searchScope === "service") {
         return matchesSearchTokens(searchTokens, [
           shop.name,
           shop.category,
@@ -385,6 +386,7 @@ export function HomeScreenNext() {
           shop.address,
           shop.description,
           shop.story,
+          ...(shop.teamMembers?.map((member) => `${member.name} ${member.role}`) ?? []),
         ]);
       }
 
@@ -494,7 +496,8 @@ export function HomeScreenNext() {
   const filteredProducts = useMemo(() => {
     return filteredProductsBase.filter((product) => {
       if (!visibleShopIds.has(product.shopId)) return false;
-      if (searchTokens.length === 0 || searchScope === "shop") return true;
+      if (searchScope === "service") return false;
+      if (searchTokens.length === 0) return true;
 
       return matchesSearchTokens(searchTokens, [
         product.title,
@@ -526,11 +529,18 @@ export function HomeScreenNext() {
     searchQuery.trim().length > 0 &&
     (isCatalogLoading || isProductsLoading || isResolvingShops || isSearchSettling);
   const searchLoadingLabel =
-    searchScope === "product" ? "Recherche des produits..." : "Recherche des boutiques...";
-  const searchResultsSummary = `${filteredShops.length} boutiques · ${recentProducts.length} produits`;
+    searchScope === "product" ? "Recherche des produits..." : "Recherche des services...";
+  const searchResultsSummary =
+    searchScope === "service"
+      ? `${filteredShops.length} entreprises`
+      : `${filteredShops.length} boutiques · ${recentProducts.length} produits`;
   const mobileResultsSummary = searchQuery.trim()
     ? `${searchResultsSummary}${normalizedPostalCodeFilter ? ` · CP ${normalizedPostalCodeFilter}` : ""}`
-    : `${filteredShops.length} boutiques trouvées${normalizedPostalCodeFilter ? ` · CP ${normalizedPostalCodeFilter}` : ""}`;
+    : `${
+        searchScope === "service"
+          ? `${filteredShops.length} entreprises trouvées`
+          : `${filteredShops.length} boutiques trouvées`
+      }${normalizedPostalCodeFilter ? ` · CP ${normalizedPostalCodeFilter}` : ""}`;
   const firstName = user?.firstName?.trim() || "Profil";
   const lastName = user?.lastName?.trim() || "";
   const profileInitials = `${firstName.charAt(0)}${lastName.charAt(0)}`.trim().toUpperCase() || "P";
@@ -647,16 +657,21 @@ export function HomeScreenNext() {
       navigate("/auth?role=seller");
       return;
     }
-    if (!user?.siretVerified) {
-      navigate("/siret");
-      return;
-    }
 
     const run = async () => {
+      if (!user?.id) {
+        navigate("/auth?role=seller");
+        return;
+      }
       if (user?.role !== "seller" && user?.roles.includes("seller")) {
         await switchRole("seller");
       }
-      navigate("/dashboard");
+      const targetPath = await resolveSellerEntryPath({
+        userId: user.id,
+        accessToken,
+        siretVerified: user.siretVerified,
+      });
+      navigate(targetPath);
     };
 
     void run();
@@ -804,15 +819,15 @@ export function HomeScreenNext() {
               searchScope === "product" ? "bg-coral-light text-coral" : ""
             }`}
           >
-              Produit
+            Produit
           </DropdownMenuItem>
           <DropdownMenuItem
-            onSelect={() => setSearchScope("shop")}
+            onSelect={() => setSearchScope("service")}
             className={`cursor-pointer rounded-lg px-3 py-2 text-sm ${
-              searchScope === "shop" ? "bg-coral-light text-coral" : ""
+              searchScope === "service" ? "bg-coral-light text-coral" : ""
             }`}
           >
-              Boutique
+            Service
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -1231,7 +1246,8 @@ export function HomeScreenNext() {
             </div>
           </div>
 
-          <div className="mt-6 flex gap-6">
+          {searchScope !== "service" && (
+            <div className="mt-6 flex gap-6">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-3">
                 <Sparkles className="w-4 h-4 text-coral" />
@@ -1286,7 +1302,8 @@ export function HomeScreenNext() {
                 />
               )}
             </div>
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Mobile layout */}
@@ -1329,7 +1346,52 @@ export function HomeScreenNext() {
                 </div>
 
                 {/* Recently added products */}
-                <div>
+                {searchScope !== "service" && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <Sparkles className="w-4 h-4 text-coral" />
+                      <h3>Récemment ajoutés</h3>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {recentProducts.map((product) => (
+                        <ProductCard
+                          key={product.id}
+                          {...product}
+                          onClick={() =>
+                            navigate(
+                              getProductHref({
+                                id: product.id,
+                                shopSlug: product.shopSlug,
+                                shopName: product.shopName,
+                              })
+                            )
+                          }
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* List view */}
+          {view === "list" && (
+            <div className="px-4 py-3 space-y-3 pb-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3>Boutiques à proximité</h3>
+                {renderShopSortButtons()}
+              </div>
+              {filteredShops.map((shop) => (
+                <ShopCard
+                  key={shop.id}
+                  {...shop}
+                  onClick={() => navigate(getShopHref(shop))}
+                />
+              ))}
+
+              {searchScope !== "service" && (
+                <div className="pt-4">
                   <div className="flex items-center gap-2 mb-3">
                     <Sparkles className="w-4 h-4 text-coral" />
                     <h3>Récemment ajoutés</h3>
@@ -1352,48 +1414,7 @@ export function HomeScreenNext() {
                     ))}
                   </div>
                 </div>
-              </div>
-            </>
-          )}
-
-          {/* List view */}
-          {view === "list" && (
-            <div className="px-4 py-3 space-y-3 pb-4">
-              <div className="flex items-center justify-between gap-3">
-                <h3>Boutiques à proximité</h3>
-                {renderShopSortButtons()}
-              </div>
-              {filteredShops.map((shop) => (
-                <ShopCard
-                  key={shop.id}
-                  {...shop}
-                  onClick={() => navigate(getShopHref(shop))}
-                />
-              ))}
-
-              <div className="pt-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Sparkles className="w-4 h-4 text-coral" />
-                  <h3>Récemment ajoutés</h3>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  {recentProducts.map((product) => (
-                    <ProductCard
-                      key={product.id}
-                      {...product}
-                      onClick={() =>
-                        navigate(
-                          getProductHref({
-                            id: product.id,
-                            shopSlug: product.shopSlug,
-                            shopName: product.shopName,
-                          })
-                        )
-                      }
-                    />
-                  ))}
-                </div>
-              </div>
+              )}
             </div>
           )}
         </div>
@@ -1401,7 +1422,7 @@ export function HomeScreenNext() {
 
       <footer className="hidden border-t border-border bg-white lg:block">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-8 py-5 text-sm text-muted-foreground">
-          <p>MonCadeauLocal</p>
+          <p>Lovcal</p>
           <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2">
             {publicInfoLinks.map((item) => (
               <button

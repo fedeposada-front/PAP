@@ -1,7 +1,7 @@
 import { MapPin, Star, Clock, Truck, ShoppingBag } from "lucide-react";
 import type { Shop, Product } from "../types/catalog";
 import { getCategoryLabel } from "../data/catalog";
-import logoImg from "../../assets/logo.png";
+import logoImg from "../../assets/logo-lovcal-horizontal.png";
 import giftIcon from "../../assets/gift-icon.png";
 
 // Logo Component
@@ -10,7 +10,7 @@ export function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
   return (
     <img
       src={logoImg.src}
-      alt="MonCadeauLocal"
+      alt="Lovcal"
       className="block w-auto max-w-full object-contain"
       style={{ height: `${heights[size]}px` }}
     />

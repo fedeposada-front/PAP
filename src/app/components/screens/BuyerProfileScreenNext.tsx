@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Camera, Heart, Package, Star, Phone, LogOut, Save, Store, ChevronRight, UserMinus } from "lucide-react";
 import { Button, Header, Input, Badge } from "../ds";
@@ -24,20 +24,16 @@ interface BuyerProfileLocalData {
   avatarDataUrl: string | null;
 }
 
-const DEFAULT_PROFILE_DATA: BuyerProfileLocalData = {
-  address: "",
-  phone: "",
-  avatarDataUrl: null,
-};
-
 export function BuyerProfileScreenNext() {
   const router = useRouter();
-  const push = (path: string) => router.push(path);
+  const push = useCallback((path: string) => router.push(path), [router]);
   const { user, isAuthenticated, isLoading, accessToken, updateProfile, logout } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [nickname, setNickname] = useState("");
+  const [city, setCity] = useState("");
   const [address, setAddress] = useState("");
   const [phone, setPhone] = useState("");
   const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null);
@@ -64,6 +60,8 @@ export function BuyerProfileScreenNext() {
     if (!user) return;
     setFirstName(user.firstName ?? "");
     setLastName(user.lastName ?? "");
+    setNickname(user.nickname ?? user.firstName ?? "");
+    setCity(user.city ?? "");
 
     if (typeof window === "undefined") return;
     const raw = window.localStorage.getItem(getStorageKey(user.id));
@@ -116,7 +114,12 @@ export function BuyerProfileScreenNext() {
     return null;
   }
 
-  const avatarFallback = `${firstName.charAt(0)}${lastName.charAt(0)}`.trim().toUpperCase() || "P";
+  const publicNickname = nickname.trim() || firstName.trim() || "Client Lovcal";
+  const publicCity = city.trim();
+  const avatarFallback =
+    `${firstName.charAt(0)}${lastName.charAt(0)}`.trim().toUpperCase()
+    || publicNickname.charAt(0).toUpperCase()
+    || "P";
 
   const handleAvatarUpload = (file: File) => {
     const reader = new FileReader();
@@ -141,7 +144,12 @@ export function BuyerProfileScreenNext() {
       setIsSaving(true);
       setMessage(null);
       try {
-        await updateProfile({ firstName: nextFirst, lastName: nextLast });
+        await updateProfile({
+          firstName: nextFirst,
+          lastName: nextLast,
+          nickname,
+          city,
+        });
         if (typeof window !== "undefined") {
           const localData: BuyerProfileLocalData = {
             address: address.trim(),
@@ -226,6 +234,7 @@ export function BuyerProfileScreenNext() {
             </button>
             <div>
               <h3 className="mb-1">{firstName} {lastName}</h3>
+              <p className="text-sm text-coral">{publicNickname}</p>
               <p className="text-sm text-muted-foreground">{user.email}</p>
             </div>
           </div>
@@ -233,6 +242,8 @@ export function BuyerProfileScreenNext() {
           <div className="space-y-3">
             <Input placeholder="Prenom" value={firstName} onChange={setFirstName} />
             <Input placeholder="Nom" value={lastName} onChange={setLastName} />
+            <Input placeholder="Nickname visible par les boutiques" value={nickname} onChange={setNickname} />
+            <Input placeholder="Ville" value={city} onChange={setCity} />
             <AddressAutocompleteInput
               placeholder="Adresse"
               value={address}
@@ -247,6 +258,33 @@ export function BuyerProfileScreenNext() {
             <Button fullWidth onClick={handleSave} disabled={isSaving} icon={<Save className="w-4 h-4" />}>
               {isSaving ? "Enregistrement..." : "Enregistrer mes infos"}
             </Button>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4">
+          <h4 className="flex items-center gap-2 mb-3">
+            <Star className="w-4 h-4 text-yellow-500" />
+            Ma carte client
+          </h4>
+          <div className="rounded-2xl border border-coral/15 bg-coral-light/30 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Profil visible par les boutiques</p>
+                <p className="mt-2 text-lg break-words">{publicNickname}</p>
+                <p className="text-sm text-muted-foreground break-words">{firstName} {lastName}</p>
+              </div>
+              <Badge variant="outline">Acheteur</Badge>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <div className="rounded-xl bg-white/80 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Ville</p>
+                <p className="mt-1 text-sm">{publicCity || "Non renseignee"}</p>
+              </div>
+              <div className="rounded-xl bg-white/80 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Evaluations</p>
+                <p className="mt-1 text-sm">Aucune evaluation pour le moment</p>
+              </div>
+            </div>
           </div>
         </div>
 

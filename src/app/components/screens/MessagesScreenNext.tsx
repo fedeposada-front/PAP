@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Send, ImageIcon, ChevronRight } from "lucide-react";
+import { Send, ImageIcon, ChevronRight, MapPin, Star } from "lucide-react";
 import { Badge, Button, Logo } from "../ds";
 import { fetchShops } from "../../services/catalog";
 import type { Shop } from "../../types/catalog";
@@ -40,6 +40,20 @@ function formatConversationTime(value: string) {
     day: "2-digit",
     month: "2-digit",
   }).format(date);
+}
+
+function joinIdentityParts(parts: Array<string | null | undefined>) {
+  const unique = new Map<string, string>();
+
+  for (const part of parts) {
+    const normalized = part?.trim() ?? "";
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (unique.has(key)) continue;
+    unique.set(key, normalized);
+  }
+
+  return Array.from(unique.values()).join(" · ");
 }
 
 function MessagesHeader({
@@ -191,15 +205,32 @@ function ConversationList({
               const shop = shopById.get(conversation.shopId);
               const isBuyerView = conversation.buyerUserId === currentUserId;
               const preview = conversation.lastMessagePreview?.trim() || "Nouvelle conversation";
+              const sellerFacingName =
+                conversation.buyerDisplayName.trim().toLowerCase() === "client"
+                  ? conversation.buyerEmail?.trim() || conversation.buyerDisplayName
+                  : conversation.buyerDisplayName;
+              const sellerFacingTitle = conversation.buyerNickname?.trim() || sellerFacingName;
               const title = isBuyerView
                 ? shop?.name ?? "Boutique"
-                : conversation.buyerDisplayName;
+                : sellerFacingTitle;
               const avatarLabel = isBuyerView
                 ? shop?.name ?? "Boutique"
-                : conversation.buyerDisplayName;
+                : sellerFacingTitle;
               const avatarSrc = isBuyerView
                 ? (shop?.image ?? "https://placehold.co/96x96?text=MCL")
                 : null;
+              const secondaryLabel =
+                !isBuyerView
+                  ? joinIdentityParts([
+                      conversation.buyerFullName && conversation.buyerFullName !== title
+                        ? conversation.buyerFullName
+                        : null,
+                      conversation.buyerCity,
+                      conversation.buyerEmail && conversation.buyerEmail !== title
+                        ? conversation.buyerEmail
+                        : null,
+                    ]) || null
+                  : null;
 
               return (
                 <button
@@ -225,6 +256,9 @@ function ConversationList({
                         {formatConversationTime(conversation.lastMessageAt)}
                       </span>
                     </div>
+                    {secondaryLabel && (
+                      <p className="text-[11px] text-muted-foreground truncate">{secondaryLabel}</p>
+                    )}
                     <p className="text-xs text-muted-foreground truncate">{preview}</p>
                   </div>
                   <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
@@ -337,12 +371,26 @@ function ChatView({
 
   const shop = shops.find((entry) => entry.id === conversation?.shopId);
   const isBuyerView = conversation?.buyerUserId === currentUserId;
+  const sellerFacingName = conversation?.buyerDisplayName?.trim().toLowerCase() === "client"
+    ? conversation?.buyerEmail?.trim() || conversation?.buyerDisplayName || "Client"
+    : conversation?.buyerDisplayName ?? "Client";
   const counterpartName = isBuyerView
     ? shop?.name ?? "Boutique"
-    : conversation?.buyerDisplayName ?? "Client";
+    : conversation?.buyerNickname?.trim() || sellerFacingName;
   const counterpartAvatarSrc = isBuyerView
     ? (shop?.image ?? "https://placehold.co/96x96?text=MCL")
     : null;
+  const counterpartSecondaryLabel =
+    !isBuyerView
+      ? joinIdentityParts([
+          conversation?.buyerFullName && conversation.buyerFullName !== counterpartName
+            ? conversation.buyerFullName
+            : null,
+          conversation?.buyerEmail && conversation.buyerEmail !== counterpartName
+            ? conversation.buyerEmail
+            : null,
+        ]) || null
+      : null;
 
   const handleSend = async () => {
     const text = input.trim();
@@ -402,6 +450,9 @@ function ChatView({
             )}
             <div className="flex-1 min-w-0">
               <p className="text-sm truncate">{counterpartName}</p>
+              {counterpartSecondaryLabel && (
+                <p className="text-[11px] text-muted-foreground truncate">{counterpartSecondaryLabel}</p>
+              )}
               <div className="flex items-center gap-1.5">
                 {isBuyerView ? (
                   shop?.isOpen ? (
@@ -419,6 +470,43 @@ function ChatView({
           <p className="text-sm text-muted-foreground">Conversation</p>
         )}
       </div>
+
+      {!isBuyerView && conversation && (
+        <div className="border-b border-border/60 bg-white px-4 pb-3">
+          <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Carte client</p>
+                <p className="mt-1 text-sm break-words">{counterpartName}</p>
+                {counterpartSecondaryLabel && (
+                  <p className="mt-1 text-[11px] text-muted-foreground break-words">{counterpartSecondaryLabel}</p>
+                )}
+              </div>
+              <Badge variant="outline">Acheteur</Badge>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="rounded-xl bg-white px-3 py-2.5 shadow-sm">
+                <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                  <MapPin className="h-3.5 w-3.5" />
+                  Ville
+                </div>
+                <p className="mt-1 text-sm">{conversation.buyerCity?.trim() || "Non renseignee"}</p>
+              </div>
+              <div className="rounded-xl bg-white px-3 py-2.5 shadow-sm">
+                <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                  <Star className="h-3.5 w-3.5" />
+                  Evaluations
+                </div>
+                <p className="mt-1 text-sm">
+                  {conversation.buyerReviewCount && conversation.buyerReviewCount > 0
+                    ? `${conversation.buyerRating?.toFixed(1) ?? "-"} / 5 · ${conversation.buyerReviewCount} avis`
+                    : "Aucune evaluation pour le moment"}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loadError && (
         <div className="px-4 pt-4">
@@ -527,7 +615,10 @@ export function MessagesScreenNext() {
         setBootstrapError(null);
         const conversation = await ensureBuyerConversation({
           buyerUserId: user.id,
-          buyerDisplayName: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "Client",
+          buyerDisplayName:
+            user.nickname?.trim()
+            || `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim()
+            || "Client",
           shopId: shopIdFromUrl,
           accessToken,
         });
@@ -557,6 +648,7 @@ export function MessagesScreenNext() {
     accessToken,
     user?.id,
     user?.role,
+    user?.nickname,
     user?.firstName,
     user?.lastName,
     router,

@@ -7,6 +7,7 @@ import type {
   PickupReservation,
   Shipment,
 } from "../types/orders";
+import { isShopInternalUser } from "./shopAccess";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -387,6 +388,15 @@ export async function createDraftOrder(params: CreateDraftOrderInput): Promise<D
   if (params.items.length === 0) throw new Error("La commande doit contenir au moins un article.");
   if (params.items.some((item) => item.shopId !== params.shopId)) {
     throw new Error("Toutes les lignes doivent appartenir a la meme boutique.");
+  }
+  if (
+    await isShopInternalUser({
+      shopId: params.shopId,
+      userId: params.buyerUserId,
+      accessToken: params.accessToken,
+    })
+  ) {
+    throw new Error("Vous ne pouvez pas acheter une offre publiée par votre entreprise.");
   }
 
   const amounts = computeDraftOrderAmounts({

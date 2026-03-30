@@ -12,21 +12,57 @@ import {
 } from "lucide-react";
 import { Button, Badge, Header } from "../ds";
 import { useCart } from "../CartContext";
+import { useAuth } from "../AuthContext";
 import { getProductHref } from "../../utils/shopRouting";
+import { fetchInternalShopIds } from "../../services/shopAccess";
 
 export function CartScreenNext() {
   const router = useRouter();
   const push = (path: string) => router.push(path);
+  const { user, accessToken } = useAuth();
   const { items, updateQty, removeItem, toggleMode, subtotal, buyerFee, total, totalItems } = useCart();
   const [cartNotice, setCartNotice] = useState<string | null>(null);
+  const [internalShopIds, setInternalShopIds] = useState<string[]>([]);
   const noticeTimerRef = useRef<number | null>(null);
   const hasStockIssues = items.some((item) => item.qty > Math.max(0, item.product.stock));
+  const hasInternalOffers = items.some((item) => internalShopIds.includes(item.product.shopId));
 
   useEffect(() => {
     return () => {
       if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!user?.id || !accessToken || items.length === 0) {
+      setInternalShopIds([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const nextInternalShopIds = await fetchInternalShopIds({
+          shopIds: items.map((item) => item.product.shopId),
+          userId: user.id,
+          accessToken,
+        });
+        if (!cancelled) {
+          setInternalShopIds(nextInternalShopIds);
+        }
+      } catch {
+        if (!cancelled) {
+          setInternalShopIds([]);
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [items, user?.id, accessToken]);
 
   const flashCartNotice = (message: string) => {
     setCartNotice(message);
@@ -44,6 +80,11 @@ export function CartScreenNext() {
           {cartNotice && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               {cartNotice}
+            </div>
+          )}
+          {hasInternalOffers && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Retirez du panier les offres publiées par votre entreprise pour pouvoir commander.
             </div>
           )}
           {items.length === 0 ? (
@@ -175,6 +216,11 @@ export function CartScreenNext() {
                     Stock maximum atteint pour ce produit.
                   </p>
                 )}
+                {internalShopIds.includes(item.product.shopId) && (
+                  <p className="mt-2 text-xs text-amber-700">
+                    Cette offre appartient à votre entreprise. Elle ne peut pas être commandée.
+                  </p>
+                )}
               </div>
             ))
           )}
@@ -210,10 +256,10 @@ export function CartScreenNext() {
                 fullWidth
                 size="lg"
                 className="mt-5"
-                disabled={hasStockIssues}
+                disabled={hasStockIssues || hasInternalOffers}
                 onClick={() => push("/checkout")}
               >
-                Commander
+                {hasInternalOffers ? "Retirez vos propres offres" : "Commander"}
               </Button>
               <p className="text-xs text-center text-muted-foreground mt-3">
                 Paiement sécurisé · Remboursement possible
@@ -241,8 +287,12 @@ export function CartScreenNext() {
             <span>Total</span>
             <span className="text-xl text-coral">{total.toFixed(2)} €</span>
           </div>
-          <Button fullWidth size="lg" disabled={hasStockIssues} onClick={() => push("/checkout")}>
-            {hasStockIssues ? "Stock à corriger" : `Commander · ${total.toFixed(2)} €`}
+          <Button fullWidth size="lg" disabled={hasStockIssues || hasInternalOffers} onClick={() => push("/checkout")}>
+            {hasInternalOffers
+              ? "Retirez vos propres offres"
+              : hasStockIssues
+                ? "Stock à corriger"
+                : `Commander · ${total.toFixed(2)} €`}
           </Button>
         </div>
       )}

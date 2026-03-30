@@ -1,11 +1,16 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Header, Input, Badge } from "../ds";
 import { useAuth } from "../AuthContext";
 import { AddressAutocompleteInput, type AddressSuggestion } from "../AddressAutocompleteInput";
-import { fetchShopSettings, saveShopSettings } from "../../services/shopSettings";
+import {
+  fetchShopSettings,
+  saveShopSettings,
+  saveShopStorefrontSettingsViaApi,
+} from "../../services/shopSettings";
+import { fetchManagedShopAccess, type ManagedShopAccess } from "../../services/shopAccess";
 import { getPasswordRuleMessage } from "../../utils/passwordRules";
 import { CATEGORY_GROUPS } from "../../data/catalog";
 import { getShopHref } from "../../utils/shopRouting";
@@ -30,6 +35,7 @@ import {
   PartyPopper,
   Coffee,
 } from "lucide-react";
+import type { BusinessType } from "../../types/catalog";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -67,8 +73,8 @@ const DEFAULT_SCHEDULE: Record<string, DaySchedule> = {
 
 export function SettingsScreenNext() {
   const router = useRouter();
-  const push = (path: string) => router.push(path);
-  const { logout, user, accessToken, updateSellerStatus, updateUser, updateProfile, updateEmail, updatePassword } = useAuth();
+  const push = useCallback((path: string) => router.push(path), [router]);
+  const { logout, user, accessToken, updateSellerStatus, updateUser, updateProfile, updateEmail, updatePassword, isAuthenticated, switchRole } = useAuth();
   const [activeTab, setActiveTab] = useState<SettingsTab>("shop");
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -99,6 +105,7 @@ export function SettingsScreenNext() {
   const [vacationMode, setVacationMode] = useState(Boolean(user?.sellerVacationMode));
   const [businessDeactivated, setBusinessDeactivated] = useState(Boolean(user?.sellerDeactivated));
   const [shopPublished, setShopPublished] = useState(false);
+  const [shopBusinessType, setShopBusinessType] = useState<BusinessType>("product");
 
   // Notifications
   const [notifOrders, setNotifOrders] = useState(true);
@@ -125,15 +132,92 @@ export function SettingsScreenNext() {
   const [payoutError, setPayoutError] = useState<string | null>(null);
   const [payoutMessage, setPayoutMessage] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [shopAccess, setShopAccess] = useState<ManagedShopAccess | null>(null);
+  const [shopAccessResolved, setShopAccessResolved] = useState(false);
+  const [notificationsSaved, setNotificationsSaved] = useState(false);
 
   useEffect(() => {
-    if (!user?.id || !accessToken) return;
+    if (!isAuthenticated) {
+      push("/auth?role=seller");
+      return;
+    }
+    if (user?.role === "seller") return;
+
+    const run = async () => {
+      if (user?.roles.includes("seller")) {
+        await switchRole("seller");
+        return;
+      }
+      push("/auth?role=seller");
+    };
+
+    void run();
+  }, [isAuthenticated, user?.role, user?.roles, push, switchRole]);
+
+  useEffect(() => {
+    if (!user?.id || !accessToken || user.role !== "seller") {
+      setShopAccess(null);
+      setShopAccessResolved(false);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const access = await fetchManagedShopAccess({
+          userId: user.id,
+          accessToken,
+        });
+
+        if (!access && !user.siretVerified) {
+          if (!cancelled) {
+            setShopAccess(null);
+            setShopAccessResolved(true);
+            push("/siret");
+          }
+          return;
+        }
+
+        if (!cancelled) {
+          setShopAccess(access);
+          setShopAccessResolved(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setShopAccess(null);
+          setShopAccessResolved(true);
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.role, user?.siretVerified, accessToken, push]);
+
+  useEffect(() => {
+    if (!user?.id || !accessToken || !shopAccessResolved || (!shopAccess && !user?.siretVerified)) return;
     let cancelled = false;
 
     const run = async () => {
       try {
         const shop = await fetchShopSettings(user.id, accessToken);
         if (!shop || cancelled) return;
+
+        if (!shopAccess) {
+          try {
+            const refreshedAccess = await fetchManagedShopAccess({
+              userId: user.id,
+              accessToken,
+            });
+            if (!cancelled && refreshedAccess) {
+              setShopAccess(refreshedAccess);
+            }
+          } catch {
+            // ignore access refresh errors and keep loading the shop itself
+          }
+        }
 
         setShopName(shop.name ?? "");
         setShopCategory(shop.category ?? "");
@@ -152,6 +236,11 @@ export function SettingsScreenNext() {
         setDeliveryCarrier(Boolean(shop.delivery_carrier ?? false));
         setOpenHolidays(Boolean(shop.open_holidays));
         setShopPublished(Boolean(shop.is_published));
+        setShopBusinessType(
+          shop.business_type === "service" || shop.business_type === "hybrid"
+            ? shop.business_type
+            : "product"
+        );
         if (shop.opening_hours && typeof shop.opening_hours === "object") {
           setSchedule((prev) => ({ ...prev, ...(shop.opening_hours as Record<string, DaySchedule>) }));
         }
@@ -170,7 +259,7 @@ export function SettingsScreenNext() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id, user?.email, accessToken]);
+  }, [user?.id, user?.email, user?.siretVerified, accessToken, shopAccess, shopAccessResolved]);
 
   useEffect(() => {
     setAccountFirstName(user?.firstName ?? "");
@@ -179,7 +268,15 @@ export function SettingsScreenNext() {
   }, [user?.firstName, user?.lastName, user?.email]);
 
   useEffect(() => {
-    if (!user?.id || !accessToken || !SUPABASE_URL || !SUPABASE_ANON_KEY) return;
+    if (
+      !user?.id ||
+      !accessToken ||
+      !SUPABASE_URL ||
+      !SUPABASE_ANON_KEY ||
+      !shopAccess?.canManageSettings
+    ) {
+      return;
+    }
     let cancelled = false;
     const run = async () => {
       try {
@@ -213,7 +310,27 @@ export function SettingsScreenNext() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id, accessToken]);
+  }, [user?.id, accessToken, shopAccess?.canManageSettings]);
+
+  const canManageSettings = Boolean(shopAccess?.canManageSettings);
+  const canEditStorefront = Boolean(shopAccess?.canManageContent || shopAccess?.canManageSettings);
+  const canEditStorefrontOperations = Boolean(shopAccess?.isOwner || shopAccess?.roles.includes("manager"));
+
+  useEffect(() => {
+    if (!shopAccessResolved) return;
+    if (canEditStorefront) return;
+    if (activeTab === "shop") {
+      setActiveTab("account");
+    }
+  }, [activeTab, canEditStorefront, shopAccessResolved]);
+
+  if (!isAuthenticated || user?.role !== "seller" || !shopAccessResolved) {
+    return null;
+  }
+
+  if (!shopAccess && !user?.siretVerified) {
+    return null;
+  }
 
   const handleImageUpload = (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -235,8 +352,13 @@ export function SettingsScreenNext() {
   const handleSave = (publishTarget: boolean) => {
     const run = async () => {
       setSaved(false);
+      setNotificationsSaved(false);
       if (!user?.id || !accessToken) {
         setSaveError("Session invalide. Merci de vous reconnecter.");
+        return;
+      }
+      if (!canEditStorefront) {
+        setSaveError("Acces refuse a la vitrine.");
         return;
       }
 
@@ -249,10 +371,10 @@ export function SettingsScreenNext() {
       if (shopPhone.trim() && !/^[0-9+() .-]{8,20}$/.test(shopPhone.trim())) errors.push("Telephone invalide.");
       if (shopEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(shopEmail.trim())) errors.push("E-mail invalide.");
       if (shopWebsite.trim() && !/^https?:\/\//i.test(shopWebsite.trim())) errors.push("Site web: utilisez une URL http(s).");
-      if (delivery && !deliveryHand && !deliveryPost && !deliveryCarrier) {
+      if (canEditStorefrontOperations && delivery && !deliveryHand && !deliveryPost && !deliveryCarrier) {
         errors.push("Selectionnez au moins un mode de livraison.");
       }
-      if (!pickup && !delivery) {
+      if (canEditStorefrontOperations && !pickup && !delivery) {
         errors.push("Activez au moins Retrait ou Livraison.");
       }
       if (errors.length > 0) {
@@ -262,34 +384,65 @@ export function SettingsScreenNext() {
 
       setSaveError(null);
       setIsSaving(true);
-      await updateSellerStatus({
-        vacationMode,
-        deactivated: businessDeactivated,
-      });
-      const persistedShop = await saveShopSettings({
-        userId: user.id,
-        accessToken,
-        shopName: shopName.trim(),
-        shopCategory: shopCategory.trim(),
-        shopDesc: shopDesc.trim(),
-        shopStory: shopStory.trim(),
-        shopAddress: shopAddress.trim(),
-        shopCity: shopCity.trim(),
-        shopPostal: shopPostal.trim(),
-        shopPhone: shopPhone.trim(),
-        shopEmail: shopEmail.trim(),
-        shopWebsite: shopWebsite.trim(),
-        schedule,
-        openHolidays,
-        pickup,
-        delivery,
-        deliveryHand,
-        deliveryPost,
-        deliveryCarrier,
-        logoImage: logoImage ?? null,
-        bannerImage: bannerImage ?? null,
-        isPublished: publishTarget,
-      });
+      let persistedShop;
+      if (canManageSettings) {
+        await updateSellerStatus({
+          vacationMode,
+          deactivated: businessDeactivated,
+        });
+        persistedShop = await saveShopSettings({
+          userId: user.id,
+          accessToken,
+          shopName: shopName.trim(),
+          shopCategory: shopCategory.trim(),
+          shopDesc: shopDesc.trim(),
+          shopStory: shopStory.trim(),
+          shopAddress: shopAddress.trim(),
+          shopCity: shopCity.trim(),
+          shopPostal: shopPostal.trim(),
+          shopPhone: shopPhone.trim(),
+          shopEmail: shopEmail.trim(),
+          shopWebsite: shopWebsite.trim(),
+          schedule,
+          openHolidays,
+          pickup,
+          delivery,
+          deliveryHand,
+          deliveryPost,
+          deliveryCarrier,
+          logoImage: logoImage ?? null,
+          bannerImage: bannerImage ?? null,
+          isPublished: publishTarget,
+        });
+      } else {
+        await saveShopStorefrontSettingsViaApi({
+          accessToken,
+          shopName: shopName.trim(),
+          shopCategory: shopCategory.trim(),
+          shopDesc: shopDesc.trim(),
+          shopStory: shopStory.trim(),
+          shopAddress: shopAddress.trim(),
+          shopCity: shopCity.trim(),
+          shopPostal: shopPostal.trim(),
+          shopPhone: shopPhone.trim(),
+          shopEmail: shopEmail.trim(),
+          shopWebsite: shopWebsite.trim(),
+          schedule,
+          openHolidays,
+          pickup,
+          delivery,
+          deliveryHand,
+          deliveryPost,
+          deliveryCarrier,
+          logoImage: logoImage ?? null,
+          bannerImage: bannerImage ?? null,
+          isPublished: publishTarget,
+        });
+        persistedShop = await fetchShopSettings(user.id, accessToken);
+        if (!persistedShop) {
+          throw new Error("Enregistrement effectue, mais lecture de verification impossible.");
+        }
+      }
       setShopName(persistedShop.name ?? "");
       setShopCategory(persistedShop.category ?? "");
       setShopDesc(persistedShop.description ?? "");
@@ -307,16 +460,23 @@ export function SettingsScreenNext() {
       setDeliveryCarrier(Boolean(persistedShop.delivery_carrier ?? false));
       setOpenHolidays(Boolean(persistedShop.open_holidays ?? false));
       setShopPublished(Boolean(persistedShop.is_published ?? false));
+      setShopBusinessType(
+        persistedShop.business_type === "service" || persistedShop.business_type === "hybrid"
+          ? persistedShop.business_type
+          : "product"
+      );
       if (persistedShop.logo_image_url && !persistedShop.logo_image_url.startsWith("blob:")) {
         setLogoImage(persistedShop.logo_image_url);
       }
       if (persistedShop.banner_image_url && !persistedShop.banner_image_url.startsWith("blob:")) {
         setBannerImage(persistedShop.banner_image_url);
       }
-      updateUser({
-        shopName: persistedShop.name ?? shopName.trim(),
-        shopAddress: persistedShop.address ?? shopAddress.trim(),
-      });
+      if (canManageSettings) {
+        updateUser({
+          shopName: persistedShop.name ?? shopName.trim(),
+          shopAddress: persistedShop.address ?? shopAddress.trim(),
+        });
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       setIsSaving(false);
@@ -444,15 +604,27 @@ export function SettingsScreenNext() {
   };
 
   const tabs: { key: SettingsTab; label: string }[] = [
-    { key: "shop", label: "Boutique" },
+    ...(canEditStorefront ? [{ key: "shop" as const, label: "Entreprise" }] : []),
     { key: "account", label: "Compte" },
     { key: "notifications", label: "Notifs" },
   ];
   const isPublishedShop = shopPublished;
   const previewShopHref = `${getShopHref({
-    id: user?.id ?? "seller",
+    id: shopAccess?.shopId ?? user?.id ?? "seller",
     name: shopName.trim() || user?.shopName || "boutique",
   })}?preview=1`;
+
+  const handleSaveNotifications = () => {
+    setNotificationsSaved(true);
+    setTimeout(() => setNotificationsSaved(false), 2000);
+  };
+
+  const businessTypeLabel =
+    shopBusinessType === "service"
+      ? "Services"
+      : shopBusinessType === "hybrid"
+        ? "Produits et services"
+        : "Produits";
 
   const saveName = () => {
     const run = async () => {
@@ -566,7 +738,7 @@ export function SettingsScreenNext() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
           {/* ─── SHOP TAB ─── */}
-          {activeTab === "shop" && (
+          {activeTab === "shop" && canEditStorefront && (
             <>
               {/* Shop photo banner */}
               <div className="relative bg-white rounded-2xl border border-border/50 shadow-sm overflow-hidden">
@@ -638,13 +810,13 @@ export function SettingsScreenNext() {
               <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4 space-y-4">
                 <h4 className="flex items-center gap-2">
                   <Building2 className="w-4 h-4 text-green" />
-                  Informations de la boutique
+                  Informations de l'entreprise
                 </h4>
 
                 <div className="space-y-3">
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">
-                      Nom de la boutique
+                      Nom de l'entreprise
                     </label>
                     <Input
                       value={shopName}
@@ -689,7 +861,7 @@ export function SettingsScreenNext() {
 
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">
-                      Histoire de la boutique
+                      Histoire de l'entreprise
                     </label>
                     <textarea
                       value={shopStory}
@@ -697,6 +869,29 @@ export function SettingsScreenNext() {
                       rows={5}
                       className="w-full bg-muted rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-green/30 border border-transparent focus:border-green/50 transition-all resize-none"
                     />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Type d'activité sur LOVCAL
+                    </label>
+                    <div className="rounded-xl border border-border bg-muted/40 px-4 py-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p>{businessTypeLabel}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Définissez si votre entreprise propose des produits, des services, ou les deux.
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => push("/onboarding?next=/settings&edit=1")}
+                        >
+                          Modifier
+                        </Button>
+                      </div>
+                    </div>
                   </div>
 
                   <div>
@@ -961,7 +1156,8 @@ export function SettingsScreenNext() {
                 </div>
               </div>
 
-              <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4 space-y-4">
+              {canManageSettings && (
+                <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4 space-y-4">
                 <h4 className="flex items-center gap-2">
                   <Shield className="w-4 h-4 text-green" />
                   Statut de l'entreprise
@@ -1003,10 +1199,12 @@ export function SettingsScreenNext() {
                     <span className={`w-5 h-5 rounded-full bg-white transition-transform ${businessDeactivated ? "translate-x-5" : "translate-x-0"}`} />
                   </span>
                 </button>
-              </div>
+                </div>
+              )}
 
               {/* Options */}
-              <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4 space-y-2">
+              {canEditStorefrontOperations && (
+                <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4 space-y-2">
                 <h4 className="flex items-center gap-2 mb-2">
                   <Truck className="w-4 h-4 text-green" />
                   Options de retrait / livraison
@@ -1046,7 +1244,8 @@ export function SettingsScreenNext() {
                     />
                   </div>
                 )}
-              </div>
+                </div>
+              )}
 
               {/* Save */}
               <Button
@@ -1060,9 +1259,20 @@ export function SettingsScreenNext() {
                   }
                 }}
               >
-                Voir l'aperçu de la boutique
+                Voir l'aperçu de l'entreprise
               </Button>
-              {!isPublishedShop ? (
+              {!canEditStorefrontOperations ? (
+                <Button
+                  fullWidth
+                  size="lg"
+                  variant="accent"
+                  icon={<Save className="w-4 h-4" />}
+                  onClick={() => handleSave(shopPublished)}
+                  disabled={isSaving}
+                >
+                  {saved ? "Vitrine enregistree !" : isSaving ? "Enregistrement..." : "Enregistrer la vitrine"}
+                </Button>
+              ) : !isPublishedShop ? (
                 <>
                   <Button
                     fullWidth
@@ -1238,7 +1448,8 @@ export function SettingsScreenNext() {
               </div>
 
               {/* Payment */}
-              <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4 space-y-4">
+              {canManageSettings && (
+                <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4 space-y-4">
                 <h4 className="flex items-center gap-2">
                   <CreditCard className="w-4 h-4 text-green" />
                   Moyen de versement
@@ -1307,7 +1518,8 @@ export function SettingsScreenNext() {
                     {payoutError && <p className="text-sm text-destructive">{payoutError}</p>}
                   </div>
                 )}
-              </div>
+                </div>
+              )}
 
               {/* Danger zone */}
               <div className="bg-white rounded-2xl border border-red-200 shadow-sm p-4 space-y-3">
@@ -1349,7 +1561,7 @@ export function SettingsScreenNext() {
                   />
                   <ToggleRow
                     icon={<Bell className="w-4 h-4" />}
-                    label="Promotions MonCadeauLocal"
+                    label="Promotions Lovcal"
                     desc="Offres et nouveautés de la plateforme"
                     checked={notifPromo}
                     onChange={setNotifPromo}
@@ -1369,9 +1581,9 @@ export function SettingsScreenNext() {
                 size="lg"
                 variant="accent"
                 icon={<Save className="w-4 h-4" />}
-                onClick={() => handleSave(shopPublished)}
+                onClick={handleSaveNotifications}
               >
-                {saved ? "Enregistré !" : "Enregistrer"}
+                {notificationsSaved ? "Enregistre !" : "Enregistrer"}
               </Button>
             </>
           )}
