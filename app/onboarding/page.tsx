@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Briefcase, ChevronRight, Layers3, ShoppingBag } from "lucide-react";
 import { Button, Logo } from "../../src/app/components/ds";
@@ -48,7 +48,7 @@ const BUSINESS_TYPE_OPTIONS: Array<{
   },
 ];
 
-export default function OnboardingPage() {
+function OnboardingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isAuthenticated, user, accessToken } = useAuth();
@@ -226,5 +226,14 @@ export default function OnboardingPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={null}>
+      <OnboardingContent />
+    </Suspense>
   );
 }
